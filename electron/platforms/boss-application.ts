@@ -37,15 +37,27 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
   const lightChat = !!lightDialog?.querySelector('.startchat-content')
   const root = lightChat ? lightDialog : editorNode?.closest<HTMLElement>('.chat-conversation,.chat-container,.chat-im,.chat-wrap,.chat-box,[role="dialog"]') || all('.chat-conversation')[0]
   const normalize = (value: string) => value.replace(/\s|有限责任公司|股份有限公司|有限公司/g, '').toLowerCase()
-  const context = normalize(text(root) + ' ' + text(document.querySelector('.chat-content .job-info,.chat-content .job-detail')))
-  const lightIdentity = lightChat && selectedId === job.id && context.includes(normalize(job.company)) && (!job.recruiterName || normalize(text(root?.querySelector('.boss-info .name'))) === normalize(job.recruiterName))
-  const conversation = !!root && !root.querySelector('.chat-no-data') && !!job.company && (lightIdentity || context.includes(normalize(job.title)) && context.includes(normalize(job.company)))
+  // Only identity fields can identify a conversation. History and the draft may
+  // mention any employer and must never authorize sending into the open chat.
+  const identityText = root ? all('.boss-info,.job-info,.job-detail,h2,h3', root)
+    .filter(e => !e.closest('.message-item,.chat-message,.message-list,.im-list,[contenteditable],textarea'))
+    .map(e => text(e)).join(' ') : ''
+  const context = normalize(identityText)
+  const company = normalize(job.company)
+  const title = normalize(job.title)
+  const lightIdentity = selectedId === job.id && !!company && context.includes(company) && (!job.recruiterName || normalize(text(root?.querySelector('.boss-info .name'))) === normalize(job.recruiterName))
+  const conversation = !!root && !root.querySelector('.chat-no-data') && !!company && (lightChat ? lightIdentity : !!title && context.includes(title) && context.includes(company))
   const own = root ? all('.message-item.item-myself,.message-item.is-self,[data-own-message]', root) : []
   // The lightweight greeting dialog uses outgoing rows with a status indicator,
   // without the item-myself class used by the full conversation page.
   if (lightChat && root) own.push(...all('.startchat-content .message-list > .message-item', root).filter(e => !!e.querySelector('.status')))
   const normalizedMessage = message.replace(/\s+/g, ' ').trim()
-  const matching = [...new Set(own)].filter(e => text(e.querySelector('.message-content,.text-content,.message-text,p.text,p') || e).replace(/送达|已读/g, '').trim() === normalizedMessage)
+  const matching = [...new Set(own)].filter(e => {
+    const content = (e.querySelector('.message-content,.text-content,.message-text,p.text,p') || e).cloneNode(true) as HTMLElement
+    // Strip status elements, never receipt words that occur in the message body.
+    content.querySelectorAll('.status,[class*="status-"],.send-fail,.message-fail').forEach(status => status.remove())
+    return text(content) === normalizedMessage
+  })
   const pendingOrFailed = (e: Element) => {
     const status = e.querySelector('.status')
     return !!e.querySelector('.send-fail,.message-fail,.status-fail,.status-sending,.sending,[data-pending="true"],.status.error,.status.fail,.status.sending,.status.loading,.status.pending') || e.matches('.sending,.send-fail') || /发送中|发送失败/.test(text(status)) || !!(lightChat && status && !status.matches('.success') && !/已发送|送达|已读/.test(text(status)))

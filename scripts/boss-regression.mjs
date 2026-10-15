@@ -50,7 +50,25 @@ try {
   await page.locator('.status').evaluate(e => { e.className = 'status success'; e.textContent = '已发送' })
   await page.locator('.position').evaluate(e => e.textContent = '另一家公司·招聘者')
   assert.equal((await inspect({ messageCount: 0 })).messageSent, false, 'A lightweight dialog must match the selected job and company')
-  console.log('BOSS timeout regression passed: own-message confirmation does not depend on optional receipt labels.')
+  const failures = []
+  const check = (actual, expected, label) => { if (actual !== expected) failures.push(label) }
+  // Message bodies may contain receipt words as ordinary prose.
+  await page.setContent('<main class="chat-conversation"><h2>前端开发</h2><h3>示例公司</h3><li class="message-item item-myself"><p>您好，已阅读职位要求，可协助消息送达优化。</p><span class="status-delivery">送达</span></li><textarea id="chat-input"></textarea></main>')
+  const prose = await page.evaluate(source => (0, eval)('(' + source + ')')('state', { id: 'fixture', title: '前端开发', company: '示例公司' }, '您好，已阅读职位要求，可协助消息送达优化。', { messageCount: 0 }), bossApplicationAction.toString())
+  check(prose.messageSent, true, 'Receipt words inside the actual message must be preserved')
+  // A historical message mentioning the target employer must not authenticate another chat.
+  await page.locator('h3').evaluate(e => e.textContent = '另一家公司')
+  await page.locator('p').evaluate(e => e.textContent = '示例公司 前端开发 已确认的测试消息')
+  check((await inspect({ messageCount: 0 })).conversation, false, 'Chat history must not supply the company identity')
+  // A matching title/company in a lightweight dialog must not bypass its HR/job checks.
+  await page.setContent('<a class="more-job-btn" href="https://www.zhipin.com/job_detail/fixture.html">详情</a><div class="dialog-container"><div class="boss-info"><span class="name">另一位 HR</span><span class="position">示例公司·前端开发</span></div><div class="startchat-content"><textarea class="input-area"></textarea></div></div>')
+  const mismatch = await page.evaluate(source => (0, eval)('(' + source + ')')('fill-message', { id: 'fixture', title: '前端开发', company: '示例公司', recruiterName: '目标 HR' }, '测试消息', { messageCount: 0 }), bossApplicationAction.toString())
+  check(mismatch.conversation, false, 'Lightweight HR mismatch must not fall back to title/company')
+  check(!!mismatch.target, false, 'A mismatched recruiter must never receive a fill target')
+  await page.locator('.more-job-btn').evaluate(e => e.href = 'https://www.zhipin.com/job_detail/another.html')
+  check((await inspect({ messageCount: 0 })).conversation, false, 'Lightweight job mismatch must not fall back to title/company')
+  assert.deepEqual(failures, [], failures.join('\n'))
+  console.log('BOSS DOM regression passed: optional receipts, pending/failed sends, historical messages, receipt words in message bodies, and company/HR/job conversation identity.')
 } finally {
   await app?.close().catch(() => {})
   await rm(directory, { recursive: true, force: true })
