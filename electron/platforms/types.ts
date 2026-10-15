@@ -1,19 +1,18 @@
-import type { AuthStatus, Job, PlatformDescriptor } from '../../shared/contracts'
+import type { AiDecision, ApplicationOutcome, ApplicationSettings, AuthStatus, Job, PlatformDescriptor } from '../../shared/contracts'
 
-// Platform-specific selectors and navigation stay behind this interface.
-// The browser host, persistence and task lifecycle do not depend on Boss selectors.
+export interface AutomationBrowser {
+  listUrl: string
+  navigate(url: string, signal: AbortSignal): Promise<void>
+  execute<T>(script: string, signal: AbortSignal): Promise<T>
+  evaluate(job: Job, description: string, signal: AbortSignal): Promise<AiDecision | null>
+  beforeContact(): void
+}
+// Each platform owns its own selectors, navigation and application sequence.
 export interface PlatformAdapter {
-  descriptor: PlatformDescriptor
-  partition: string
-  entryUrl: string
-  loginUrl: string
+  descriptor: PlatformDescriptor; partition: string; entryUrl: string; loginUrl: string
   isAllowedUrl(url: string): boolean
   searchUrl(keyword: string): string
-  inspectScript: string
-  scrollScript: string
+  inspectScript: string; scrollScript: string
+  apply(browser: AutomationBrowser, job: Job, settings: ApplicationSettings, signal: AbortSignal): Promise<ApplicationOutcome>
 }
-export interface PageInspection {
-  auth: AuthStatus
-  account: string
-  jobs: Job[]
-}
+export interface PageInspection { auth: AuthStatus; account: string; jobs: Job[] }

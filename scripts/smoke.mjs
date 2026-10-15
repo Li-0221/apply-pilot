@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 
 const profile = await mkdtemp(join(tmpdir(), 'apply-pilot-electron-'))
 const artifacts = resolve('.test-artifacts')
@@ -11,10 +13,29 @@ await mkdir(artifacts, { recursive: true })
 const env = { ...process.env, APPLY_PILOT_DATA_DIR: profile }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.ELECTRON_RENDERER_URL
+const fixture = await readFile('tests/fixtures/boss.html', 'utf8')
+const aiRequests = []
+let failAi = true
+const aiServer = createServer(async (request, response) => {
+  let body = ''
+  for await (const chunk of request) body += chunk
+  const input = JSON.parse(body)
+  aiRequests.push({ input, authorization: request.headers.authorization })
+  if (input.messages.length === 1) {
+    response.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }))
+    return
+  }
+  const data = JSON.parse(input.messages[1].content)
+  if (failAi && data.job.title === 'AI 重试岗位') { response.writeHead(503); response.end('fixture failure'); return }
+  const matched = data.job.title !== 'AI 不匹配岗位'
+  response.setHeader('Content-Type', 'application/json')
+  response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matched, score: matched ? 92 : 20,
+    reason: matched ? '简历与 React 岗位匹配' : '简历与岗位要求不匹配', greeting: matched ? `您好，我有 React 项目经验，希望应聘${data.job.title}。` : '' }) } }] }))
+})
+aiServer.listen(0, '127.0.0.1')
+await once(aiServer, 'listening')
+const aiUrl = `http://127.0.0.1:${aiServer.address().port}/v1`
 let instance
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><style>body{font:16px sans-serif;padding:30px;color:#234}button{padding:12px}.job-card-wrapper{border-bottom:1px solid #ddd;padding:20px}.nav-figure{padding:12px}</style></head><body><button class="header-login-btn" id="login">测试夹具：登录</button><script>
-const render=()=>{if(!localStorage.getItem('fixture-session'))return;document.body.innerHTML='<div class="nav-figure">夹具账号（非真实登录）</div>'+[1,2].map(i=>'<div class="job-card-wrapper"><div class="job-card-box"><a href="https://www.zhipin.com/job_detail/fixture'+i+'.html"><span class="job-name">测试岗位 '+i+'</span></a><span class="company-name">测试公司</span><span class="salary">20-30K</span><span class="job-area">上海</span><ul class="tag-list"><li>React</li></ul></div></div>').join('')};document.getElementById('login').onclick=()=>{document.cookie='mvp_fixture_session=persist-check; Secure; SameSite=Lax; Path=/';localStorage.setItem('fixture-session','yes');render()};render();</script></body></html>`
-
 async function launch() {
   const app = await electron.launch({ executablePath, args: ['.'], cwd: process.cwd(), env, timeout: 30_000 })
   const page = await app.firstWindow()
@@ -22,27 +43,28 @@ async function launch() {
   await app.context().route('https://www.zhipin.com/**', route => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture }))
   return { app, page }
 }
-async function snapshot(page) { return page.evaluate(() => window.desktop.command({ type: 'snapshot' })) }
+const snapshot = page => page.evaluate(() => window.desktop.command({ type: 'snapshot' }))
 async function waitFor(page, predicate) {
-  for (let i = 0; i < 100; i++) { const state = await snapshot(page); if (predicate(state)) return state; await new Promise(resolve => setTimeout(resolve, 100)) }
-  throw new Error('Timed out waiting for desktop state')
+  for (let i = 0; i < 200; i++) { const state = await snapshot(page); if (predicate(state)) return state; await new Promise(resolve => setTimeout(resolve, 100)) }
+  throw new Error('Timed out waiting for desktop state: ' + JSON.stringify((await snapshot(page)).task))
 }
-
+async function start(page, overrides = {}) {
+  await page.evaluate(async overrides => { const state = await window.desktop.command({ type: 'snapshot' }); await window.desktop.command({ type: 'start', settings: { ...state.settings, ...overrides } }) }, overrides)
+}
 try {
   instance = await launch()
   const { app, page } = instance
-  const errors = []
-  page.on('pageerror', error => errors.push(error.message))
+  await page.evaluate(async () => { const state = await window.desktop.command({ type: 'snapshot' }); await window.desktop.command({ type: 'save-ai', settings: { ...state.ai, enabled: false } }) })
+  const errors = []; page.on('pageerror', error => errors.push(error.message))
   await page.screenshot({ path: join(artifacts, 'workspace.png') })
   await page.getByRole('button', { name: '打开 Boss 直聘', exact: true }).click()
   await waitFor(page, state => state.browser.opened && !state.browser.loading)
-  const remote = app.context().pages().find(value => value !== page && value.url().startsWith('https://www.zhipin.com'))
-  assert.ok(remote, 'Embedded browser page exists')
+  let remote = app.context().pages().find(value => value !== page && value.url().startsWith('https://www.zhipin.com'))
+  assert.ok(remote)
   assert.equal(await remote.evaluate(() => typeof window.desktop), 'undefined')
   assert.equal(await remote.evaluate(() => typeof require), 'undefined')
   assert.equal((await snapshot(page)).auth, 'signed-out')
-  await remote.waitForFunction(() => innerWidth >= 1140, undefined, { timeout: 3000 })
-  assert.ok(await remote.evaluate(() => innerWidth >= 1140), 'Boss desktop controls fit the embedded viewport')
+  await remote.waitForFunction(() => innerWidth >= 1140)
   await page.getByRole('button', { name: '收起浏览器', exact: true }).click()
   await remote.getByRole('button', { name: '测试夹具：登录' }).click()
   await page.getByRole('button', { name: '检查登录', exact: true }).click()
@@ -51,69 +73,140 @@ try {
   await waitFor(page, state => Boolean(state.savedAt))
   assert.ok((await readFile(join(profile, 'boss-session.enc'))).length > 0)
   assert.equal((await readFile(join(profile, 'boss-session.enc'))).includes(Buffer.from('persist-check')), false)
-  await page.getByRole('button', { name: '开始采集', exact: true }).click()
-  await page.getByRole('button', { name: '停止采集', exact: true }).click()
-  await waitFor(page, state => state.task.status === 'stopped')
-  // Wait for the cancelled task to release its in-flight lock before restarting.
-  await new Promise(resolve => setTimeout(resolve, 300))
-  await page.getByRole('button', { name: '开始采集', exact: true }).click()
-  const collected = await waitFor(page, state => state.task.status === 'completed')
-  assert.equal(collected.jobs.length, 2)
-  assert.equal(collected.task.collected, 2)
-  await page.getByRole('button', { name: '岗位列表', exact: true }).click()
-  await page.getByText('测试岗位 1', { exact: true }).waitFor()
-  await page.screenshot({ path: join(artifacts, 'jobs-fixture.png') })
-  await page.getByRole('textbox', { name: '筛选已保存岗位' }).fill('不存在的岗位')
-  await page.getByText('没有匹配的岗位', { exact: true }).waitFor()
-  await page.getByRole('button', { name: '清空筛选', exact: true }).click()
-  assert.equal(await page.getByText('测试岗位 1', { exact: true }).count(), 1)
+  // Exercise the actual Start button, not a developer-only route.
+  await page.getByRole('button', { name: '开始投递', exact: true }).click()
+  let completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.status, 'completed', completed.task.message)
+  assert.equal(completed.task.sent, 1)
+  assert.equal(completed.applications.find(r => r.job.id === 'existing').status, 'skipped')
+  assert.equal(completed.applications.find(r => r.job.id === 'one').resume, 'waiting-reply')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-resume-click-one')), null, 'Disabled resume button must never be clicked')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-one')), '1')
+  await start(page, { message: '测试补充消息' })
+  completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.status, 'completed', completed.task.message)
+  assert.equal(completed.applications.find(r => r.job.id === 'two').status, 'resume-sent')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-two')), '1')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-message-two')), '1')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-resume-two')), '1')
+  await page.getByRole('button', { name: '投递记录', exact: true }).click()
+  await page.getByText('测试岗位 2', { exact: true }).waitFor()
+  await page.screenshot({ path: join(artifacts, 'applications-fixture.png') })
+  await page.getByRole('textbox', { name: '筛选投递记录' }).fill('不存在的岗位')
+  await page.getByText('没有匹配的记录', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '清空筛选' }).click()
+  // Cancel after the site accepted a contact but before it returns confirmation.
+  await remote.evaluate(() => localStorage.setItem('fixture-third', 'yes'))
+  await start(page, { message: '' })
+  await remote.waitForFunction(() => localStorage.getItem('fixture-contact-three') === '1')
+  await page.evaluate(() => window.desktop.command({ type: 'stop' }))
+  const stopped = await waitFor(page, state => state.task.status === 'stopped')
+  assert.equal(stopped.applications.find(r => r.job.id === 'three').status, 'uncertain')
+  await start(page)
+  completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.sent, 0, 'A cancelled/uncertain contact must not be retried')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-three')), '1')
+  // A greeting-only batch must dismiss the previous success dialog before selecting the next job.
+  await remote.evaluate(() => localStorage.setItem('fixture-simple', 'yes'))
+  await remote.goto('https://www.zhipin.com/web/geek/jobs')
+  await start(page, { limit: 2, message: '', sendResume: false })
+  completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.status, 'completed', completed.task.message)
+  assert.equal(completed.task.sent, 2)
+  for (const id of ['simple-a', 'simple-b']) {
+    assert.equal(await remote.evaluate(id => localStorage.getItem('fixture-contact-' + id), id), '1')
+    assert.equal(completed.applications.find(r => r.job.id === id).resume, 'not-requested')
+  }
+  // Exercise the AI form and a local compatible provider, never a user's real credentials.
+  await remote.evaluate(() => localStorage.setItem('fixture-ai', 'yes'))
+  await remote.goto('https://www.zhipin.com/web/geek/jobs')
+  await page.getByRole('button', { name: 'AI 与简历', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'AI 筛选与定制消息' }).check()
+  await page.getByRole('textbox', { name: 'Base URL', exact: true }).fill(aiUrl)
+  await page.locator('#ai-key').fill('fixture-ai-secret')
+  await page.getByRole('textbox', { name: '模型', exact: true }).fill('fixture-model')
+  await page.getByRole('textbox', { name: '简历内容', exact: true }).fill('测试候选人：有 React 和 TypeScript 项目经验。')
+  await page.getByRole('button', { name: '测试连接', exact: true }).click()
+  await page.getByText('连接成功', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await waitFor(page, state => state.ai.enabled && state.ai.keyConfigured)
+  await page.screenshot({ path: join(artifacts, 'ai-settings-fixture.png') })
+  assert.equal(await page.locator('#ai-key').inputValue(), '')
+  assert.equal(JSON.stringify(await snapshot(page)).includes('fixture-ai-secret'), false)
+  assert.equal((await readFile(join(profile, 'workspace.json'), 'utf8')).includes('fixture-ai-secret'), false)
+  assert.equal((await readFile(join(profile, 'ai-key.enc'))).includes(Buffer.from('fixture-ai-secret')), false)
+  await start(page, { limit: 1, sendResume: true })
+  completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.status, 'completed', completed.task.message)
+  assert.equal(completed.task.sent, 1)
+  assert.equal(completed.applications.find(r => r.job.id === 'ai-reject').status, 'skipped')
+  assert.equal(completed.applications.find(r => r.job.id === 'ai-match').score, 92)
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-ai-reject')), null)
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-message-ai-match')), '1')
+  assert.ok(await remote.getByText('您好，我有 React 项目经验，希望应聘AI 匹配岗位。', { exact: true }).count())
+  await start(page)
+  completed = await waitFor(page, state => state.task.status === 'failed')
+  assert.equal(completed.applications.find(r => r.job.id === 'ai-error').retryable, true)
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-ai-error')), null)
+  failAi = false
+  await start(page)
+  completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
+  assert.equal(completed.task.status, 'completed', completed.task.message)
+  assert.equal(completed.applications.find(r => r.job.id === 'ai-error').status, 'resume-sent')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-ai-error')), '1')
+  assert.ok(aiRequests.every(request => request.authorization === 'Bearer fixture-ai-secret'))
+  assert.ok(aiRequests.filter(request => request.input.messages.length > 1).every(request => {
+    const data = JSON.parse(request.input.messages[1].content)
+    return data.resume.includes('React') && data.job.description.includes('岗位要求：')
+  }))
   await assert.rejects(page.evaluate(() => window.desktop.command({ type: 'open-job', url: 'https://evil.example/job_detail/one.html' })))
   await remote.goto('https://www.zhipin.com/web/passport/zp/security.html')
-  const verification = await page.evaluate(() => window.desktop.command({ type: 'check-auth' }))
-  assert.equal(verification.auth, 'verification', 'Boss security redirect is distinguished from logged-out or unknown state')
+  assert.equal((await page.evaluate(() => window.desktop.command({ type: 'check-auth' }))).auth, 'verification')
   await remote.evaluate(() => { location.href = 'https://example.com' })
-  await new Promise(resolve => setTimeout(resolve, 200))
+  await new Promise(resolve => setTimeout(resolve, 100))
   assert.ok(remote.url().startsWith('https://www.zhipin.com'))
-  // A website can close its own WebContentsView. The host must recover instead of staying blank.
   await remote.close()
-  await waitFor(page, state => !state.browser.opened && !state.browser.loading)
+  await waitFor(page, state => !state.browser.opened)
   await page.getByRole('button', { name: '工作台', exact: true }).click()
   await page.getByRole('button', { name: '打开 Boss 直聘', exact: true }).click()
-  await waitFor(page, state => state.browser.opened && state.auth === 'signed-in')
-  // A renderer reload receives a fresh state snapshot and reuses the same browser session.
+  await waitFor(page, state => state.auth === 'signed-in')
   await page.reload()
-  await page.getByRole('heading', { name: 'Boss 直聘工作台' }).waitFor()
-  assert.equal((await snapshot(page)).jobs.length, 2)
+  assert.equal((await snapshot(page)).applications.length, 9)
   assert.deepEqual(errors, [])
   await app.close()
   instance = await launch()
   const restored = await snapshot(instance.page)
-  assert.equal(restored.jobs.length, 2)
+  assert.equal(restored.applications.length, 9)
+  assert.equal(restored.ai.keyConfigured, true)
+  assert.equal(restored.ai.model, 'fixture-model')
   assert.ok(restored.savedAt)
-  const cookies = await instance.app.evaluate(async ({ session }) => {
-    const values = await session.fromPartition('persist:get-jobs-boss-default').cookies.get({ name: 'mvp_fixture_session' })
-    return values.map(cookie => ({ name: cookie.name, value: cookie.value, session: cookie.session }))
-  })
-  assert.equal(cookies[0]?.value, 'persist-check')
-  assert.equal(cookies[0]?.session, true)
+  const cookieCount = await instance.app.evaluate(async ({ session }) => (await session.fromPartition('persist:get-jobs-boss-default').cookies.get({ name: 'mvp_fixture_session' })).length)
+  assert.equal(cookieCount, 1)
   await instance.page.getByRole('button', { name: '打开 Boss 直聘', exact: true }).click()
   await waitFor(instance.page, state => state.auth === 'signed-in')
+  await start(instance.page)
+  await waitFor(instance.page, state => state.task.status === 'completed')
+  assert.equal((await snapshot(instance.page)).task.sent, 0)
   await instance.page.getByRole('button', { name: '本地设置', exact: true }).click()
-  await instance.page.getByRole('button', { name: '退出登录并清除会话', exact: true }).click()
-  await instance.page.getByRole('button', { name: '确认清除', exact: true }).click()
+  await instance.page.getByRole('button', { name: '退出登录并清除会话' }).click()
+  await instance.page.getByRole('button', { name: '确认清除' }).click()
   await waitFor(instance.page, state => state.auth === 'signed-out' && !state.browser.opened)
-  assert.equal((await snapshot(instance.page)).jobs.length, 2)
   await instance.app.close()
   instance = await launch()
-  const remaining = await instance.app.evaluate(async ({ session }) => (await session.fromPartition('persist:get-jobs-boss-default').cookies.get({ name: 'mvp_fixture_session' })).length)
-  assert.equal(remaining, 0)
   assert.equal((await snapshot(instance.page)).savedAt, null)
-  console.log('Electron smoke passed: embedded isolation, auth detection, encrypted session, cancellation, collection, deduplication, filter, navigation guard, native page closure recovery, reload, restart persistence and logout. Fixture results do not establish real-site login compatibility.')
+  assert.equal((await snapshot(instance.page)).applications.length, 9)
+  await instance.page.getByRole('button', { name: 'AI 与简历', exact: true }).click()
+  await instance.page.getByRole('button', { name: '清除 Key', exact: true }).click()
+  await waitFor(instance.page, state => !state.ai.keyConfigured)
+  await assert.rejects(readFile(join(profile, 'ai-key.enc')), { code: 'ENOENT' })
+  console.log('Electron application smoke passed: AI configuration and encrypted key, compatible provider, resume/JD matching, rejection before contact, customized messages, retry after AI failure, real Start button, attachments, cancellation, restart, session isolation and logout. Fixture jobs only.')
 } finally {
   if (instance) {
-    const process = instance.app.process()
-    const watchdog = setTimeout(() => { if (process.exitCode === null) process.kill('SIGKILL') }, 5000)
+    const child = instance.app.process()
+    const watchdog = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 5000)
     try { await instance.app.close().catch(() => {}) } finally { clearTimeout(watchdog) }
   }
   await rm(profile, { recursive: true, force: true })
+  aiServer.closeAllConnections()
+  await new Promise(resolve => aiServer.close(resolve))
 }

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import type { Snapshot, ViewBounds } from '../shared/contracts'
 import { platforms, getPlatform } from './platforms'
@@ -7,6 +8,8 @@ import type { PageInspection } from './platforms/types'
 import { LocalStore } from './store'
 import { SessionVault } from './session-vault'
 import { TaskRunner } from './task-runner'
+import { AiClient } from './ai'
+import { AiKeyVault } from './ai-key-vault'
 import { parseBounds, parseCommand } from './security'
 
 app.setName('Apply Pilot')
@@ -19,6 +22,9 @@ let window: BrowserWindow
 let browser: WebContentsView | null = null
 let store: LocalStore
 let vault: SessionVault
+let aiKeys: AiKeyVault
+let taskAi: AiClient | null = null
+let testingAi = false
 let state: Snapshot
 let closing = false
 let saving: Promise<void> = Promise.resolve()
@@ -185,10 +191,55 @@ async function inspect(): Promise<PageInspection> {
   } finally { clearTimeout(timer) }
 }
 
+let applicationListUrl = adapter.entryUrl
+async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted()
+  const page = liveContents()
+  if (!page || !adapter.isAllowedUrl(page.getURL())) throw new Error('请先打开 BOSS 页面')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([page.executeJavaScript(script), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('BOSS 页面响应超时')), 8000)
+    })])
+  } finally { clearTimeout(timer) }
+}
 const runner = new TaskRunner({
-  inspect,
-  scroll: async () => { await liveContents()?.executeJavaScript(adapter.scrollScript) },
-  save: jobs => { store.merge(jobs); state.jobs = store.value.jobs },
+  candidates: async (settings, signal) => {
+    const current = liveContents()?.getURL()
+    applicationListUrl = settings.keyword ? adapter.searchUrl(settings.keyword)
+      : current && new URL(current).pathname === '/web/geek/jobs' ? current : adapter.entryUrl
+    if (current !== applicationListUrl) await navigate(applicationListUrl)
+    const jobs = new Map<string, Snapshot['applications'][number]['job']>()
+    for (let pass = 0; pass < 4; pass++) {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        signal.throwIfAborted()
+        const result = await inspect()
+        if (result.auth === 'verification') throw new Error('请先在 BOSS 页面完成安全验证')
+        if (result.auth === 'signed-out') throw new Error('BOSS 登录已失效，请重新登录')
+        if (result.auth === 'signed-in' && result.jobs.length) {
+          result.jobs.forEach(job => jobs.set(job.id, job))
+          break
+        }
+        if (attempt === 29) throw new Error('未找到可投递的岗位，请检查网站筛选条件或重新加载')
+        await delay(250, undefined, { signal })
+      }
+      if (jobs.size >= 100) break
+      if (pass < 3) { await execute(adapter.scrollScript, signal); await delay(500, undefined, { signal }) }
+    }
+    return [...jobs.values()].slice(0, 100)
+  },
+  apply: (job, settings, signal, beforeContact) => adapter.apply({
+    listUrl: applicationListUrl, execute,
+    beforeContact,
+    evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
+    navigate: async (url, taskSignal) => {
+      taskSignal.throwIfAborted()
+      if (liveContents()?.getURL() !== url) await navigate(url)
+      taskSignal.throwIfAborted()
+    },
+  }, job, settings, signal),
+  hasApplication: job => store.hasApplication(job),
+  record: record => { store.record(record); state.applications = store.value.applications.slice(-500); publish() },
   log,
   update: task => { state.task = task; publish() },
 })
@@ -203,11 +254,13 @@ app.on('second-instance', () => { if (window) { if (window.isMinimized()) window
 
 app.whenReady().then(async () => {
   store = new LocalStore(app.getPath('userData'))
+  aiKeys = new AiKeyVault(app.getPath('userData'))
   state = {
     platforms: [...platforms.values()].map(platform => platform.descriptor), activePlatform: 'boss',
     auth: 'unknown', account: '', browser: { opened: false, loading: false, url: '', error: null },
-    task: { status: 'idle', collected: 0, message: '等待开始' },
-    settings: { keyword: store.value.keyword }, jobs: store.value.jobs, logs: [], savedAt: store.value.savedAt,
+    task: { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
+    settings: store.value.settings, applications: store.value.applications.slice(-500), logs: [], savedAt: store.value.savedAt,
+    ai: { ...store.value.ai, keyConfigured: aiKeys.configured },
     runtime: { electron: process.versions.electron, chromium: process.versions.chrome, node: process.versions.node, dataPath: app.getPath('userData') },
   }
   const platformSession = session.fromPartition(adapter.partition)
@@ -249,7 +302,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('desktop:command', async (event, input: unknown) => {
     authorize(event)
     const command = parseCommand(input)
-    if (runner.running && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('请先停止当前采集任务')
+    if (testingAi && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('正在测试 AI 连接，请稍候')
+    if (runner.running && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('请先停止当前投递任务')
     if (navigationPending && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('页面正在加载，请稍候')
     switch (command.type) {
       case 'snapshot': break
@@ -280,12 +334,35 @@ app.whenReady().then(async () => {
         state.browser = { opened: false, loading: false, url: '', error: null }
         log('已清除本机 Boss 登录会话')
         break
-      case 'collect':
-        if (state.auth !== 'signed-in') throw new Error('请先登录 Boss 直聘并检查登录状态')
-        store.value.keyword = command.keyword; store.save(); state.settings.keyword = command.keyword
-        // Empty keyword deliberately reads the list the user currently sees, preserving site filters.
-        log(command.keyword ? `开始读取「${command.keyword}」岗位` : '开始读取当前岗位列表')
-        runner.start(command.keyword ? () => navigate(adapter.searchUrl(command.keyword)) : undefined)
+      case 'save-settings':
+        store.value.settings = command.settings; store.save(); state.settings = command.settings
+        log('投递设置已保存', 'success')
+        break
+      case 'save-ai':
+        if (command.key) aiKeys.save(command.key)
+        store.value.ai = command.settings; store.save()
+        state.ai = { ...command.settings, keyConfigured: aiKeys.configured }
+        log('AI 与简历已保存', 'success')
+        break
+      case 'test-ai':
+        testingAi = true
+        try {
+          await new AiClient(command.settings, command.key || aiKeys.read()).test(new AbortController().signal)
+          log('AI 连接测试成功', 'success')
+        } finally { testingAi = false }
+        break
+      case 'clear-ai-key':
+        aiKeys.clear(); state.ai = { ...state.ai, keyConfigured: false }
+        log('API Key 已清除')
+        break
+      case 'start':
+        taskAi = store.value.ai.enabled ? new AiClient(store.value.ai, aiKeys.read()) : null
+        if (taskAi && !store.value.ai.resume) throw new Error('请先填写简历内容')
+        await inspect()
+        if (state.auth !== 'signed-in') throw new Error('请先登录 BOSS 直聘')
+        store.value.settings = command.settings; store.save(); state.settings = command.settings
+        log(`开始自动投递，本次最多 ${command.settings.limit} 个新岗位`)
+        runner.start(command.settings)
         break
       case 'stop': runner.stop(); if (navigationPending) liveContents()?.stop(); break
       case 'open-job': await navigate(command.url); break
@@ -295,7 +372,7 @@ app.whenReady().then(async () => {
   })
   if (process.env.ELECTRON_RENDERER_URL) await window.loadURL(process.env.ELECTRON_RENDERER_URL)
   else await window.loadFile(join(__dirname, '../dist/index.html'))
-  log('工作台已就绪，登录后即可读取岗位')
+  log('工作台已就绪，登录后可开始投递')
   if (restoreError) log(restoreError, 'error')
   else if (state.savedAt) log('已恢复本机会话，打开 Boss 页面后将检查是否仍有效')
   probeTimer = setInterval(() => {

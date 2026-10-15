@@ -1,20 +1,20 @@
 # Apply Pilot
 
-基于 Electron、React 和 TypeScript 的本地求职工作台。当前仅接入 BOSS 直聘，独立运行，无需 Java 后端。
+基于 Electron、React 和 TypeScript 的本地求职助手，当前支持 BOSS 直聘。界面基于 [shadcn-admin](https://github.com/satnaing/shadcn-admin)，沿用默认主题和组件样式。
 
-界面基于 [shadcn-admin](https://github.com/satnaing/shadcn-admin)，沿用默认主题和组件样式。
+## 功能
 
-## 当前功能
+- 应用内扫码登录 BOSS，在本机保存登录会话。
+- 配置兼容 OpenAI Chat Completions 的 Base URL、API Key 和模型，支持测试连接。
+- 粘贴简历内容，AI 根据岗位描述打分、筛选，并生成定制沟通消息。
+- 按关键词、城市、排除词筛选岗位，设置投递数量和间隔。
+- 自动发起沟通、发送补充消息，并在网站允许时发送附件简历。
+- 投递记录显示匹配理由、消息和附件状态；已联系或结果待核实的岗位不会自动重复投递。
+- 支持停止任务、退出登录和清除 Key。任务不会随应用启动自动运行。
 
-- 在应用内打开 BOSS 官网，由用户扫码登录、完成安全验证。
-- 检查登录状态，使用独立浏览器会话，在本机加密保存会话 Cookie。
-- 读取当前岗位列表，或按关键词打开搜索列表；支持停止采集。
-- 岗位去重、本机保存、筛选和详情查看。
-- 运行记录、退出登录和清除网站存储。
+BOSS 首次「立即沟通」会发送账号默认招呼语，AI 消息随后作为补充消息发送。附件使用 BOSS 账号已有的附件简历；网站要求双方回复时会记录为「等待回复」，不会绕过限制，也不会标记为附件已发送。目前不会自动回访这些会话或持续回复招聘者。
 
-目前是只读 MVP，尚未实现发送消息、自动投递、AI 匹配、多账号和其他平台。真实账号的登录保持与岗位采集需要人工验证。
-
-## 开发
+## 开始使用
 
 需要 Node.js 22.12+（22.x）或 24+，以及 pnpm 10。
 
@@ -25,68 +25,64 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-开发模式会打开 Electron 窗口。管理界面支持热更新；修改主进程或 preload 后需重新启动。
+1. 在「AI 与简历」填写 Base URL、Key、模型及简历文本，测试连接并保存。
+2. 在工作台打开 BOSS，扫码登录并完成网站安全验证。
+3. 填写岗位关键词、城市、本次数量等，点击「开始投递」。关键词留空时沿用网站当前岗位列表的筛选条件。
+4. 在「投递记录」查看匹配分、沟通消息和附件发送结果。
 
-## 构建与打包
+Base URL 可填写 `https://api.openai.com/v1`、其他兼容服务的 `/v1` 地址，或完整的 `/chat/completions` 地址。根域名会补全 `/v1/chat/completions`；有路径的地址会追加 `/chat/completions`。模型填写服务商实际支持的名称。协议依据 [Chat Completions 官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
 
-```bash
-pnpm build
-pnpm start
+AI 请求会把简历文本及当前岗位信息发送到配置的服务商。没有配置 AI 时，可关闭「AI 筛选与定制消息」并保存，使用固定补充消息。AI 开启时，服务异常或返回无效结果会停止任务，不会自动改用固定消息继续发送；未联系的岗位可以在修复设置后重新评估。
 
-# 生成当前系统、当前架构的应用
-pnpm package
-```
+开发模式支持管理界面热更新，主进程或 preload 修改后需重启。
 
-打包结果位于 `release/`。例如 macOS Apple Silicon：`release/Apply Pilot-darwin-arm64/Apply Pilot.app`。当前为本地验证包，尚未配置签名、公证与自动更新。
-
-## 检查
+## 构建与验证
 
 ```bash
 pnpm lint
 pnpm test
 pnpm build
 pnpm test:smoke
+
+pnpm start
+pnpm package
 ```
 
-核心测试覆盖指令校验、存储、去重、取消和登录状态。`test:smoke` 使用真实 Electron、临时用户目录及测试网页，验证页面隔离、加密保存、采集、重启恢复和退出清理；测试通过不代表真实 BOSS 账号已验证。截图写入被 Git 忽略的 `.test-artifacts/`。
+`pnpm package` 生成当前系统与架构的应用，输出到 `release/`。例如 macOS Apple Silicon：`release/Apply Pilot-darwin-arm64/Apply Pilot.app`。当前尚未配置签名、公证和自动更新。
 
-可选运行 `pnpm test:live`，使用临时目录检查 BOSS 官方登录页，不扫码、不投递。遇到安全验证时退出码为 2。
+测试覆盖 AI 请求协议、配置校验、停止、去重及数据迁移。集成检查使用真实 Electron、模拟 BOSS 网页和本地模拟 AI 服务，验证表单配置、Key 加密、筛选后发送、附件状态、失败重试、重启和退出登录；不会联系真实招聘者。截图保存在被 Git 忽略的 `.test-artifacts/`。模拟检查通过不能替代真实服务商和 BOSS 网站的验证。
 
-手动验证流程：
-
-1. 点击「打开 Boss 直聘」，在内置页面扫码登录并完成验证。
-2. 收起浏览器，点击「检查登录」和「保存会话」。
-3. 完全退出并重启应用，检查登录是否恢复。
-4. 在网站选择岗位与城市，返回工作台点击「开始采集」，查看「岗位列表」。
-5. 检查停止采集、退出登录和重启后的会话清理。
+可选 `pnpm test:live` 仅检查 BOSS 官方登录页，不扫码、不投递。遇到安全验证时退出码为 2。
 
 ## 项目结构
 
 ```text
-src/                       React 界面及 shadcn-admin 组件
-shared/contracts.ts        管理界面与主进程的指令及状态
-electron/main.ts           窗口、内置浏览器、IPC 和会话生命周期
-electron/platforms/        平台注册表、适配接口和 BOSS 实现
-electron/task-runner.ts     可取消的岗位采集流程
-electron/session-vault.ts  会话 Cookie 加密存储
-electron/store.ts           岗位和设置的本机存储
-scripts/                   开发、构建、打包和集成检查
-tests/                     核心测试
+src/                       React 界面与 shadcn-admin 组件
+shared/contracts.ts        指令、配置与状态类型
+electron/main.ts           窗口、内置浏览器、IPC 和生命周期
+electron/platforms/        平台接口、注册表与 BOSS 投递实现
+electron/task-runner.ts    筛选、任务取消与投递去重
+electron/ai.ts             简历匹配与沟通消息生成
+electron/ai-key-vault.ts   API Key 加密存储
+electron/session-vault.ts 会话 Cookie 加密存储
+electron/store.ts          本机配置及投递记录
+scripts/                   开发、构建、打包与集成检查
+tests/                     核心测试和网页夹具
 ```
 
-新增招聘平台时，扩展 `electron/platforms/` 的适配模块和注册表，并接入独立会话。当前宿主与会话加密模块只启用 BOSS，尚无运行时平台切换。岗位数据使用原子替换的 JSON 文件，最多保留 2,000 个岗位。
+平台页面操作放在适配模块中，AI 和任务流程不依赖 BOSS 的页面选择器。新增平台可扩展 `electron/platforms/` 的接口实现和注册表，再接入独立会话；当前仅启用 BOSS，尚无运行时平台切换。
 
 ## 本地数据
 
-用户目录显示在「本地设置」中。为保留已有登录数据，沿用桌面验证版的用户目录和独立浏览器分区，具体位置以应用显示为准。
+用户目录可在「本地设置」查看，也可通过 `APPLY_PILOT_DATA_DIR` 指定。为保留已有登录状态，继续使用桌面验证版的用户目录与浏览器分区。
 
-- Chromium 保存 Cookie、localStorage 和 IndexedDB 等网站存储。
-- `boss-session.enc` 使用 Electron `safeStorage` 加密保存会话 Cookie；系统安全存储不可用时不会回退为明文。
-- `workspace.json` 保存岗位、关键词和最近保存时间。
-- 可用 `APPLY_PILOT_DATA_DIR` 指定其他用户目录。
-- 第三方网页禁用 Node 和 preload，启用沙箱与上下文隔离，仅允许在 BOSS 的 HTTPS 域名内导航。
+- Chromium 保存网站 Cookie、localStorage 和 IndexedDB。
+- `boss-session.enc` 和 `ai-key.enc` 使用 Electron `safeStorage` 加密。系统安全存储不可用时不会回退明文；管理界面不会回显已保存的 Key。
+- `workspace.json` 保存设置、简历文本和投递记录，使用原子替换写入。简历文本保存在本机，不属于 Key 加密文件。
+- 第三方网页禁用 Node 和 preload，启用沙箱与上下文隔离，仅允许 BOSS 的 HTTPS 域名导航。AI 请求由主进程执行，Key 不注入招聘网站。
+- 开始联系前先保存投递意图。中断后结果不明的岗位标为「待核实」，不会自动重试；AI 跳过或联系前失败的岗位可以重新评估。
 
-不会读取或迁移原 Java 项目的数据库、浏览器目录或环境配置。会话持久化不能保证永久登录，过期或安全验证仍需用户处理。本地数据、依赖和构建产物不提交到仓库。
+会话可能过期，安全验证和沟通额度限制仍需按网站提示处理。岗位列表读取最多 100 条；任务使用可见页面控件，网站改版后可能需要更新适配。登录信息、简历、Key、依赖及构建产物不提交到仓库。
 
 ## 许可与来源
 

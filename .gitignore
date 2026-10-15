@@ -12,4 +12,8 @@ release/
 browser-data/
 user-data/
 boss-session.enc
+ai-key.enc
+ai-key.enc.tmp
+boss-session.enc.tmp
 workspace.json
+workspace.json.tmp

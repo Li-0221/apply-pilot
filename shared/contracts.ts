@@ -1,41 +1,46 @@
 export type AuthStatus = 'unknown' | 'checking' | 'signed-out' | 'signed-in' | 'verification'
-export type TaskStatus = 'idle' | 'running' | 'completed' | 'stopped' | 'failed'
+export type TaskStatus = 'idle' | 'running' | 'stopping' | 'completed' | 'stopped' | 'failed'
 export interface Job {
-  id: string
-  platform: string
-  title: string
-  company: string
-  salary: string
-  location: string
-  tags: string[]
-  url: string
-  collectedAt: string
+  id: string; platform: string; title: string; company: string; salary: string
+  location: string; tags: string[]; url: string; collectedAt: string
 }
-export interface PlatformDescriptor { id: string; name: string; capabilities: ('browse' | 'collect')[] }
+export interface ApplicationSettings {
+  keyword: string; city: string; excludedKeywords: string; limit: number
+  intervalSeconds: number; message: string; sendResume: boolean
+}
+export const defaultSettings: ApplicationSettings = {
+  keyword: '', city: '', excludedKeywords: '', limit: 1,
+  intervalSeconds: 5, message: '', sendResume: true,
+}
+export interface AiSettings { enabled: boolean; baseUrl: string; model: string; resume: string; minScore: number }
+export const defaultAiSettings: AiSettings = { enabled: true, baseUrl: 'https://api.openai.com/v1', model: '', resume: '', minScore: 70 }
+export interface AiDecision { matched: boolean; score: number; reason: string; greeting: string }
+export type ApplicationStatus = 'processing' | 'greeted' | 'resume-sent' | 'skipped' | 'uncertain' | 'failed'
+export type ResumeStatus = 'not-requested' | 'sent' | 'waiting-reply' | 'unavailable' | 'uncertain'
+export interface ApplicationOutcome {
+  status: Exclude<ApplicationStatus, 'processing'>; resume: ResumeStatus; detail: string
+  retryable?: boolean; score?: number; aiReason?: string; greeting?: string
+}
+export interface ApplicationRecord extends ApplicationOutcome { key: string; job: Job; startedAt: string; updatedAt: string }
+export interface PendingApplication extends Omit<ApplicationRecord, 'status'> { status: ApplicationStatus }
+export interface PlatformDescriptor { id: string; name: string; capabilities: ('browse' | 'apply')[] }
 export interface LogEntry { id: number; time: string; level: 'info' | 'success' | 'error'; message: string }
+export interface TaskState { status: TaskStatus; attempted: number; sent: number; skipped: number; failed: number; message: string }
 export interface Snapshot {
-  platforms: PlatformDescriptor[]
-  activePlatform: string
-  auth: AuthStatus
-  account: string
+  platforms: PlatformDescriptor[]; activePlatform: string; auth: AuthStatus; account: string
   browser: { opened: boolean; loading: boolean; url: string; error: string | null }
-  task: { status: TaskStatus; collected: number; message: string }
-  settings: { keyword: string }
-  jobs: Job[]
-  logs: LogEntry[]
-  savedAt: string | null
+  task: TaskState; settings: ApplicationSettings; applications: PendingApplication[]
+  ai: AiSettings & { keyConfigured: boolean }
+  logs: LogEntry[]; savedAt: string | null
   runtime: { electron: string; chromium: string; node: string; dataPath: string }
 }
 export type Command =
-  | { type: 'snapshot' }
-  | { type: 'open'; platform: string }
-  | { type: 'reload' }
-  | { type: 'login' }
-  | { type: 'check-auth' }
-  | { type: 'save-session' }
-  | { type: 'logout' }
-  | { type: 'collect'; keyword: string }
-  | { type: 'stop' }
+  | { type: 'snapshot' } | { type: 'open'; platform: string } | { type: 'reload' }
+  | { type: 'login' } | { type: 'check-auth' } | { type: 'save-session' } | { type: 'logout' }
+  | { type: 'save-settings'; settings: ApplicationSettings }
+  | { type: 'save-ai' | 'test-ai'; settings: AiSettings; key?: string }
+  | { type: 'clear-ai-key' }
+  | { type: 'start'; settings: ApplicationSettings } | { type: 'stop' }
   | { type: 'open-job'; url: string }
 export interface ViewBounds { x: number; y: number; width: number; height: number; visible: boolean }
 export interface DesktopApi {

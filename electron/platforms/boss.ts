@@ -1,5 +1,6 @@
 import type { Job, AuthStatus } from '../../shared/contracts'
 import { isBossUrl } from '../security'
+import { applyToBoss } from './boss-application'
 import type { PlatformAdapter, PageInspection } from './types'
 
 // Runs in the isolated, unprivileged website. Never receives local capabilities.
@@ -12,7 +13,7 @@ export function inspectBossPage(): PageInspection {
   }
   const body = document.body?.innerText ?? ''
   const verification = /安全验证|访问异常|访问受限|滑动验证|请完成验证/.test(body.slice(0, 8000)) || /captcha|verify|security(?:-check|\.html)/.test(location.pathname)
-  const user = [...document.querySelectorAll('.nav-figure, .user-nav .user-name, .nav-item-user')].find(visible)
+  const user = [...document.querySelectorAll('.nav-figure, .user-nav .user-name, .nav-item-user, [ka="header-username"]')].find(visible)
   const login = [...document.querySelectorAll('.header-login-btn, .btn-sign, .sign-form, .sign-wrap, .login-register, [class*="login-dialog"]')].find(visible)
   const chat = [...document.querySelectorAll('a[href*="/web/geek/chat"]')].find(visible)
   const loginDocument = location.pathname.startsWith('/web/user/') && /登录/.test(document.title) && /扫码|验证码|微信登录|手机号/.test(body)
@@ -29,9 +30,9 @@ export function inspectBossPage(): PageInspection {
     if (!id || !title || url.protocol !== 'https:' || !(url.hostname === 'zhipin.com' || url.hostname.endsWith('.zhipin.com'))) continue
     jobs.push({
       id, platform: 'boss', title,
-      company: text(card.querySelector('.company-name')),
-      salary: text(card.querySelector('.salary')),
-      location: text(card.querySelector('.job-area, .job-area-wrapper')),
+      company: text(card.querySelector('.company-name, .boss-name')),
+      salary: text(card.querySelector('.salary, .job-salary')),
+      location: text(card.querySelector('.job-area, .job-area-wrapper, .company-location')),
       tags: [...card.querySelectorAll('.tag-list li, .job-info .tag-list span')].map(text).filter(Boolean),
       url: `${url.origin}${url.pathname}`, collectedAt: new Date().toISOString(),
     })
@@ -40,12 +41,13 @@ export function inspectBossPage(): PageInspection {
 }
 
 export const bossAdapter: PlatformAdapter = {
-  descriptor: { id: 'boss', name: 'Boss 直聘', capabilities: ['browse', 'collect'] },
+  descriptor: { id: 'boss', name: 'Boss 直聘', capabilities: ['browse', 'apply'] },
   partition: 'persist:get-jobs-boss-default',
   entryUrl: 'https://www.zhipin.com/web/geek/jobs',
   loginUrl: 'https://www.zhipin.com/web/user/',
   isAllowedUrl: isBossUrl,
   searchUrl: keyword => `https://www.zhipin.com/web/geek/jobs${keyword ? `?query=${encodeURIComponent(keyword)}` : ''}`,
+  apply: applyToBoss,
   inspectScript: `(${inspectBossPage.toString()})()`,
   scrollScript: `(() => {
     const cards = document.querySelectorAll('.job-card-wrapper, .job-card-box');
