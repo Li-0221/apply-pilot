@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { blacklistReason } from '../shared/blacklist'
 import { candidateJobs } from './candidates'
 import { waitForBossLogin } from './platforms/boss-auth'
+import { interactWithPage } from './interaction'
 import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -24,6 +25,7 @@ if (!app.requestSingleInstanceLock()) app.quit()
 const adapter = getPlatform('boss')
 let window: BrowserWindow
 let browser: WebContentsView | null = null
+let listBrowser: WebContentsView | null = null
 let store: LocalStore
 let vault: SessionVault
 let aiKeys: AiKeyVault
@@ -40,6 +42,7 @@ let probePending = false
 let navigationPending = false
 let logId = 0
 let bounds: ViewBounds = { x: 0, y: 0, width: 0, height: 0, visible: false }
+let viewportBounds = { x: 0, y: 0, width: 1180, height: 800 }
 
 function publish() {
   if (!window?.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('desktop:snapshot', state)
@@ -75,15 +78,16 @@ function liveContents() {
 }
 
 function applyBounds() {
+  listBrowser?.setVisible(false)
   const contents = liveContents()
   if (!browser || !contents) return
-  if (!bounds.visible) { browser.setVisible(false); return }
+  if (bounds.width > 0 && bounds.height > 0) viewportBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
   const content = window.getContentBounds()
-  const x = Math.max(0, Math.min(bounds.x, content.width))
-  const y = Math.max(0, Math.min(bounds.y, content.height))
-  browser.setBounds({ x, y, width: Math.max(0, Math.min(bounds.width, content.width - x)), height: Math.max(0, Math.min(bounds.height, content.height - y)) })
+  const x = Math.max(0, Math.min(viewportBounds.x, content.width))
+  const y = Math.max(0, Math.min(viewportBounds.y, content.height))
+  browser.setBounds({ x, y, width: Math.max(0, Math.min(viewportBounds.width, content.width - x)), height: Math.max(0, Math.min(viewportBounds.height, content.height - y)) })
   // Boss uses a fixed desktop minimum width; keep its login controls in view.
-  contents.setZoomFactor(Math.min(1, Math.max(0.6, bounds.width / 1180)))
+  contents.setZoomFactor(Math.min(1, Math.max(0.6, viewportBounds.width / 1180)))
   browser.setVisible(bounds.visible && bounds.width > 0 && bounds.height > 0)
 }
 
@@ -97,6 +101,7 @@ function ensureBrowser() {
   const view = browser
   const contents = browser.webContents
   contents.once('destroyed', () => {
+    if (listBrowser === view) { listBrowser = null; if (!closing) runner.stop(); return }
     if (browser !== view) return
     browser = null
     if (!window.isDestroyed() && window.contentView.children.includes(view)) window.contentView.removeChildView(view)
@@ -117,24 +122,27 @@ function ensureBrowser() {
   }
   contents.on('will-navigate', guard)
   contents.on('will-redirect', guard)
-  contents.on('did-start-loading', () => { state.browser.loading = true; publish() })
+  contents.on('did-start-loading', () => { if (browser !== view) return; state.browser.loading = true; publish() })
   contents.on('did-stop-loading', () => {
+    if (browser !== view) return
     state.browser.loading = false
     updateUrl()
     publish()
     if (!runner.running && !navigationPending) void inspect().catch(() => {})
   })
   const updateUrl = () => {
+    if (browser !== view) return
     try { const url = new URL(contents.getURL()); state.browser.url = `${url.origin}${url.pathname}` } catch { /* initial blank page */ }
   }
   contents.on('did-navigate', () => { updateUrl(); applyBounds(); publish() })
   contents.on('did-navigate-in-page', () => { updateUrl(); publish() })
   contents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
-    if (!isMainFrame || code === -3) return
+    if (browser !== view || !isMainFrame || code === -3) return
     state.browser.error = `页面加载失败（${code}），请检查网络后重新加载`
     log(state.browser.error, 'error')
   })
   contents.on('render-process-gone', () => {
+    if (browser !== view) { if (listBrowser === view) runner.stop(); return }
     runner.stop()
     state.auth = 'unknown'
     state.browser.opened = false
@@ -208,6 +216,33 @@ async function navigateForTask(url: string, signal: AbortSignal) {
   await waitForBossLogin(inspect, signal)
 }
 
+async function openDetail(url: string, signal: AbortSignal) {
+  if (listBrowser) throw new Error('已有岗位详情页尚未关闭')
+  listBrowser = ensureBrowser()
+  listBrowser.setVisible(false)
+  browser = null
+  await navigateForTask(url, signal)
+}
+
+async function closeDetail() {
+  if (!listBrowser) return
+  const detail = browser
+  browser = listBrowser
+  listBrowser = null
+  if (detail) {
+    if (window.contentView.children.includes(detail)) window.contentView.removeChildView(detail)
+    if (!detail.webContents.isDestroyed()) detail.webContents.close()
+  }
+  const page = liveContents()
+  if (page) {
+    const url = new URL(page.getURL())
+    state.browser = { ...state.browser, url: `${url.origin}${url.pathname}`, loading: page.isLoading() }
+    applyBounds()
+    await inspect()
+  }
+  publish()
+}
+
 async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
   const page = liveContents()
@@ -222,25 +257,8 @@ async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
 async function interact(target: InteractionTarget, signal: AbortSignal) {
   signal.throwIfAborted()
   const page = liveContents()
-  if (!page || !/^ap-[a-z0-9]+$/.test(target.token)) throw new Error('页面操作目标失效')
-  const valid = await execute<boolean>(`(() => {
-    const e = document.querySelector('[data-apply-target="${target.token}"]');
-    if (!e) return false;
-    const r = e.getBoundingClientRect(), hit = document.elementFromPoint(${target.x}, ${target.y});
-    return r.width > 0 && r.height > 0 && (e === hit || e.contains(hit));
-  })()`, signal)
-  if (!valid) throw new Error('页面控件已变化或被遮挡，请在 BOSS 页面核实')
-  const zoom = page.getZoomFactor()
-  const point = { x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) }
-  page.focus()
-  page.sendInputEvent({ type: 'mouseMove', ...point })
-  page.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point })
-  page.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point })
-  if (target.fill !== undefined) {
-    page.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] })
-    page.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] })
-    await page.insertText(target.fill)
-  }
+  if (!page) throw new Error('请先打开 BOSS 页面')
+  await interactWithPage(page, target, execute, signal)
 }
 const runner = new TaskRunner({
   candidates: (settings, signal) => candidateJobs(settings, adapter, {
@@ -250,18 +268,18 @@ const runner = new TaskRunner({
     scroll: async taskSignal => { await execute(adapter.scrollScript, taskSignal) },
     log,
   }, signal),
-  apply: (job, settings, signal, beforeContact, progress) => adapter.apply({
-    execute, interact,
-    beforeContact: async () => { const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); await beforeContact() },
-    progress,
-    skipReason: candidate => blacklistReason(candidate, store.value.blacklist),
-    evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
-    navigate: async (url, taskSignal) => {
-      taskSignal.throwIfAborted()
-      if (liveContents()?.getURL() !== url) await navigateForTask(url, taskSignal)
-      taskSignal.throwIfAborted()
-    },
-  }, job, settings, signal),
+  apply: async (job, settings, signal, beforeContact, progress) => {
+    try {
+      return await adapter.apply({
+        execute, interact,
+        beforeContact: async () => { const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); await beforeContact() },
+        progress,
+        skipReason: candidate => blacklistReason(candidate, store.value.blacklist),
+        evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
+        openDetail,
+      }, job, settings, signal)
+    } finally { await closeDetail() }
+  },
   blacklist: () => store.value.blacklist,
   hasApplication: job => store.hasApplication(job),
   record: record => { store.record(record); state.applications = store.value.applications; state.history = store.value.history; publish() },
@@ -331,6 +349,7 @@ app.whenReady().then(async () => {
     void Promise.race([saveSession(), new Promise<void>(resolve => { shutdownTimer = setTimeout(resolve, 5000) })]).catch(() => {}).finally(() => {
       clearTimeout(shutdownTimer)
       liveContents()?.close()
+      if (listBrowser && !listBrowser.webContents.isDestroyed()) listBrowser.webContents.close()
       window.destroy()
       app.quit()
     })

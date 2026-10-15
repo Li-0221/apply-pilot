@@ -193,7 +193,7 @@ try {
   assert.equal(completed.applications.find(r => r.job.id === 'ai-match').score, 92)
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-ai-reject')), null)
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-message-ai-match')), '1')
-  assert.ok(await remote.getByText('您好，我有 React 项目经验，希望应聘AI 匹配岗位。', { exact: true }).count())
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-last-message-ai-match')), '您好，我有 React 项目经验，希望应聘AI 匹配岗位。')
   await start(page)
   completed = await waitFor(page, state => state.task.status === 'failed')
   assert.equal(completed.applications.find(r => r.job.id === 'ai-error').retryable, true)

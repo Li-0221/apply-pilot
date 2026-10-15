@@ -28,11 +28,12 @@ export function inspectBossPage(): PageInspection {
     if (!link) continue
     const url = new URL(link.href, location.origin)
     const id = url.pathname.match(/\/job_detail\/([^/]+)\.html/)?.[1]
-    const title = text(card.querySelector('.job-name, .job-title'))
+    const title = text(card.querySelector('.job-name') || card.querySelector('.job-title'))
     if (!id || !title || url.protocol !== 'https:' || !(url.hostname === 'zhipin.com' || url.hostname.endsWith('.zhipin.com'))) continue
+    const recruiter = card.querySelector('.boss-info .boss-name,.boss-info .name')
     jobs.push({
       id, platform: 'boss', title,
-      recruiterName: text(card.querySelector('.boss-info .boss-name,.boss-info .name')).slice(0, 100),
+      recruiterName: recruiter?.closest('a[href*="/gongsi/"]') ? '' : text(recruiter).slice(0, 100),
       hrActivity: text(card.querySelector('.boss-active-time,.boss-active,.active-time,.boss-online,.boss-info .status')).slice(0, 100),
       recruiterId: card.querySelector('a[href*="/boss/"]')?.getAttribute('href')?.match(/\/boss\/([^/.]+)/)?.[1],
       companyId: card.querySelector('a[href*="/gongsi/"]')?.getAttribute('href')?.match(/\/gongsi\/([^/.]+)/)?.[1],

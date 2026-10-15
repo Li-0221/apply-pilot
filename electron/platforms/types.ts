@@ -2,7 +2,7 @@ import type { AiDecision, ApplicationOutcome, ApplicationSettings, AuthStatus, J
 
 export interface InteractionTarget { token: string; x: number; y: number; fill?: string }
 export interface AutomationBrowser {
-  navigate(url: string, signal: AbortSignal): Promise<void>
+  openDetail(url: string, signal: AbortSignal): Promise<void>
   execute<T>(script: string, signal: AbortSignal): Promise<T>
   evaluate(job: Job, description: string, signal: AbortSignal): Promise<AiDecision | null>
   interact(target: InteractionTarget, signal: AbortSignal): Promise<void>

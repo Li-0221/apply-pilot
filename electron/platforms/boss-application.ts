@@ -3,10 +3,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { ApplicationOutcome, ApplicationSettings, Job } from '../../shared/contracts'
 import type { AutomationBrowser, InteractionTarget } from './types'
 
-type Action = 'state' | 'contact' | 'conversation' | 'fill-message' | 'message'
+type Action = 'state' | 'select-job' | 'contact' | 'fill-message' | 'message'
 interface PageState {
-  selectedId: string; description: string; chat: 'new' | 'existing' | 'disabled' | 'missing'; greeted: boolean
-  conversation: boolean; messageSent: boolean
+  selectedId: string; detailUrl: string; description: string; chat: 'new' | 'existing' | 'disabled' | 'missing'; greeted: boolean
+  conversation: boolean; inputReady: boolean; messageSent: boolean
   blocked: string; acted: boolean
   hrActivity: string; recruiterName: string; recruiterId: string;
   messageCount: number; target?: InteractionTarget
@@ -15,32 +15,43 @@ interface PageState {
 export function bossApplicationAction(action: Action, job: Job, message: string, baseline = { messageCount: -1 }): PageState {
   const visible = (e: Element) => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' }
   const text = (e: Element | null | undefined) => e?.textContent?.replace(/\s+/g, ' ').trim() || ''
-  const disabled = (e: Element) => e.matches(':disabled,[aria-disabled="true"],.unable,.is-disabled,.disabled')
+  const disabled = (e: Element) => e.matches(':disabled,[aria-disabled="true"],.unable,.is-disabled,.disabled,.disable')
   const pathId = (value: string) => { try { return new URL(value, location.origin).pathname.match(/\/job_detail\/([^/]+)\.html/)?.[1] || '' } catch { return '' } }
   const all = (selector: string, root: ParentNode = document) => [...root.querySelectorAll<HTMLElement>(selector)].filter(visible)
   const detailLink = all('a.more-job-btn[href*="/job_detail/"]')[0]
+  const detailUrl = detailLink ? (detailLink as HTMLAnchorElement).href : ''
   const selectedId = detailLink ? pathId((detailLink as HTMLAnchorElement).href) : pathId(location.href)
   const chatButton = all('a.op-btn-chat,a.btn-startchat,button[data-action="contact"]')[0]
   const chat: PageState['chat'] = !chatButton ? 'missing' : disabled(chatButton) ? 'disabled' : /继续沟通/.test(text(chatButton)) ? 'existing' : /立即沟通/.test(text(chatButton)) ? 'new' : 'missing'
   const description = all('.job-detail-body .desc,.job-sec-text,.job-detail-description').map(e => e.innerText).join('\n').trim().slice(0, 100000)
   const hrActivity = text(document.querySelector('.boss-active-time,.boss-active,.active-time,.boss-online,.boss-info .status')).slice(0, 100)
-  const recruiterName = text(document.querySelector('.boss-info .boss-name,.boss-info .name,.boss-info .name-text')).slice(0, 100)
+  const recruiter = (document.querySelector('.job-boss-info .name') || all('.boss-info .boss-name,.boss-info .name,.boss-info .name-text').find(e => !e.closest('a[href*="/gongsi/"]')))?.cloneNode(true) as HTMLElement | undefined
+  recruiter?.querySelectorAll('.boss-active-time,.boss-active,.active-time,.boss-online,.status').forEach(e => e.remove())
+  const recruiterName = text(recruiter).slice(0, 100)
   const recruiterId = document.querySelector('a[href*="/boss/"]')?.getAttribute('href')?.match(/\/boss\/([^/.]+)/)?.[1] || ''
   const body = document.body?.innerText || ''
   const loginRequired = all('.sign-form,.login-register,.header-login-btn').length > 0 || location.pathname.startsWith('/web/user/')
   const blocked = loginRequired ? '登录已失效' : /安全验证|请完成验证|访问受限|今日.*(?:沟通|上限)|沟通.*(?:达到|已达).*上限|操作频繁/.exec(body)?.[0] || ''
   const editorNode = all('#chat-input,textarea.input-area,[contenteditable="true"]')[0]
-  const root = all('.chat-conversation')[0] || editorNode?.closest<HTMLElement>('.chat-container,.chat-im,.chat-wrap,.chat-box,[role="dialog"]') || (editorNode && selectedId === job.id ? document.body : undefined)
+  const lightDialog = editorNode?.closest<HTMLElement>('.dialog-container')
+  const lightChat = !!lightDialog?.querySelector('.startchat-content')
+  const root = lightChat ? lightDialog : editorNode?.closest<HTMLElement>('.chat-conversation,.chat-container,.chat-im,.chat-wrap,.chat-box,[role="dialog"]') || all('.chat-conversation')[0]
   const normalize = (value: string) => value.replace(/\s|有限责任公司|股份有限公司|有限公司/g, '').toLowerCase()
   const context = normalize(text(root) + ' ' + text(document.querySelector('.chat-content .job-info,.chat-content .job-detail')))
-  const detailContext = selectedId === job.id && !!editorNode && context.includes(normalize(job.title)) && normalize(document.body.innerText).includes(normalize(job.company))
-  const conversation = !!root && !root.querySelector('.chat-no-data') && !!job.company && ((context.includes(normalize(job.title)) && context.includes(normalize(job.company))) || detailContext)
+  const lightIdentity = lightChat && selectedId === job.id && context.includes(normalize(job.company)) && (!job.recruiterName || normalize(text(root?.querySelector('.boss-info .name'))) === normalize(job.recruiterName))
+  const conversation = !!root && !root.querySelector('.chat-no-data') && !!job.company && (lightIdentity || context.includes(normalize(job.title)) && context.includes(normalize(job.company)))
   const own = root ? all('.message-item.item-myself,.message-item.is-self,[data-own-message]', root) : []
+  // The lightweight greeting dialog uses outgoing rows with a status indicator,
+  // without the item-myself class used by the full conversation page.
+  if (lightChat && root) own.push(...all('.startchat-content .message-list > .message-item', root).filter(e => !!e.querySelector('.status')))
   const normalizedMessage = message.replace(/\s+/g, ' ').trim()
-  const matching = own.filter(e => text(e.querySelector('.message-content,.text-content,.message-text,p') || e).replace(/送达|已读/g, '').trim() === normalizedMessage)
-  const pendingOrFailed = (e: Element) => !!e.querySelector('.send-fail,.message-fail,.status-fail,.status-sending,.sending,[data-pending="true"]') || e.matches('.sending,.send-fail')
+  const matching = [...new Set(own)].filter(e => text(e.querySelector('.message-content,.text-content,.message-text,p.text,p') || e).replace(/送达|已读/g, '').trim() === normalizedMessage)
+  const pendingOrFailed = (e: Element) => {
+    const status = e.querySelector('.status')
+    return !!e.querySelector('.send-fail,.message-fail,.status-fail,.status-sending,.sending,[data-pending="true"],.status.error,.status.fail,.status.sending,.status.loading,.status.pending') || e.matches('.sending,.send-fail') || /发送中|发送失败/.test(text(status)) || !!(lightChat && status && !status.matches('.success') && !/已发送|送达|已读/.test(text(status)))
+  }
   const messageCount = matching.length
-  const messageSent = !!message && messageCount > baseline.messageCount && matching.length > 0 && !pendingOrFailed(matching[matching.length - 1])
+  const messageSent = conversation && !!message && messageCount > baseline.messageCount && matching.length > 0 && !pendingOrFailed(matching[matching.length - 1])
   let target: InteractionTarget | undefined
   const act = (element: HTMLElement, fill?: string) => {
     element.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -50,13 +61,13 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
     target = { token, x: r.x + r.width / 2, y: r.y + r.height / 2, fill }
   }
   let acted = false
-  if (action !== 'state' && blocked) return { selectedId, description, chat, greeted: false, conversation, messageSent, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, target }
-  if (action === 'contact' && selectedId === job.id && chat === 'new' && chatButton) { act(chatButton); acted = true }
-  if (action === 'conversation') {
-    const continueButton = all('a.default-btn.sure-btn,button').find(e => text(e) === '继续沟通')
-    if (continueButton) { act(continueButton); acted = true }
-    else if (selectedId === job.id && chat === 'existing' && chatButton) { act(chatButton); acted = true }
+  const inputReady = conversation && !!editorNode
+  if (action !== 'state' && blocked) return { selectedId, detailUrl, description, chat, greeted: false, conversation, inputReady, messageSent, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, target }
+  if (action === 'select-job') {
+    const card = all('.job-card-wrapper,.job-card-box').find(e => [...e.querySelectorAll<HTMLAnchorElement>('a[href*="/job_detail/"]')].some(a => pathId(a.href) === job.id))
+    if (card) { act(card); acted = true }
   }
+  if (action === 'contact' && selectedId === job.id && chat === 'new' && chatButton) { act(chatButton); acted = true }
   if (action === 'fill-message' && conversation && message && !messageSent && root) {
     const editor = all('textarea,#chat-input,[contenteditable="true"]', root)[0]
     if (editor) {
@@ -71,13 +82,16 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
     if (send && draft.replace(/\s+/g, ' ').trim() === message.replace(/\s+/g, ' ').trim()) { act(send); acted = true }
   }
 
-  return { selectedId, description, chat, greeted: /已向\s*BOSS\s*发送消息/.test(body), conversation, messageSent, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, target }
+  return { selectedId, detailUrl, description, chat, greeted: /已向\s*BOSS\s*发送消息/.test(body), conversation, inputReady, messageSent, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, target }
 }
 
 export async function applyToBoss(browser: AutomationBrowser, job: Job, settings: ApplicationSettings, signal: AbortSignal): Promise<ApplicationOutcome> {
   let message = settings.message
   let evaluation: Pick<ApplicationOutcome, 'score' | 'aiReason' | 'greeting'> = { greeting: message || undefined }
   let baseline = { messageCount: -1 }
+  let stage = '选择岗位卡片'
+  let contactConfirmed = false
+  const progress = (detail: string) => { stage = detail; browser.progress({ detail }) }
   const run = async (action: Action) => {
     signal.throwIfAborted()
     const state: PageState = await browser.execute(`(${bossApplicationAction.toString()})(${JSON.stringify(action)},${JSON.stringify(job)},${JSON.stringify(message)},${JSON.stringify(baseline)})`, signal)
@@ -92,8 +106,12 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     throw new Error(`BOSS ${step}超时，请检查当前页面`)
   }
   const perform = async (): Promise<ApplicationOutcome> => {
-    browser.progress({ detail: '正在读取岗位详情' })
-    await browser.navigate(job.url, signal)
+    progress('选择列表岗位')
+    const selection = await run('select-job')
+    if (!selection.acted) throw new Error('列表中未找到当前岗位卡片，未发起沟通')
+    const preview = await wait(s => s.selectedId === job.id && !!s.detailUrl, '读取更多信息链接')
+    progress('打开独立详情页')
+    await browser.openDetail(preview.detailUrl, signal)
     const state = await wait(s => s.selectedId === job.id && s.chat !== 'missing', '打开岗位详情')
     job.description = state.description
     job.hrActivity = state.hrActivity || job.hrActivity
@@ -103,7 +121,7 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     if (hrReason) return { status: 'skipped', retryable: true, detail: hrReason }
     if (state.chat === 'existing') return { status: 'skipped', retryable: false, detail: '已沟通过，跳过重复投递' }
     if (state.chat !== 'new') return { status: 'skipped', retryable: true, detail: '岗位当前不能发起沟通' }
-    browser.progress({ detail: '正在匹配简历与岗位' })
+    progress('匹配简历与岗位')
     const decision = await browser.evaluate(job, state.description, signal)
     signal.throwIfAborted()
     if (decision) evaluation = { score: decision.score, aiReason: decision.reason, greeting: decision.matched ? decision.greeting : undefined }
@@ -111,25 +129,33 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     browser.progress({ ...evaluation, detail: '准备发起沟通' })
     if (decision) message = decision.greeting
     await browser.beforeContact()
+    stage = '点击立即沟通'
     const contact = await run('contact')
     if (!contact.acted) return { status: 'skipped', retryable: true, detail: '岗位状态已变化，未发起沟通' }
     await wait(s => s.greeted || s.conversation || s.chat === 'existing', '确认首次招呼')
+    contactConfirmed = true
+    progress('等待聊天输入框')
+    await wait(s => s.inputReady, '等待聊天输入框', 10000)
     if (!message) return { status: 'greeted', detail: 'BOSS 已确认招呼发送成功' }
-    await run('conversation')
-    await wait(s => s.conversation, '定位当前岗位会话')
     const initial = await run('state')
     baseline = { messageCount: initial.messageCount }
     if (message) {
-      browser.progress({ detail: '正在发送补充消息' })
+      progress('填写定制消息')
       await run('fill-message')
       await delay(100, undefined, { signal })
-      const sent = await run('message')
-      if (!sent.acted && !sent.messageSent) return { status: 'uncertain', detail: '招呼已发送；补充消息入口不可用，请核实' }
+      progress('点击发送')
+      const sendDeadline = Date.now() + 5000
+      let sent = await run('message')
+      while (!sent.acted && !sent.messageSent && Date.now() < sendDeadline) { await delay(250, undefined, { signal }); sent = await run('message') }
+      if (!sent.acted && !sent.messageSent) return { status: 'uncertain', detail: '默认招呼已发送；定制消息的发送入口不可用，请核实' }
+      progress('确认定制消息发送')
       await wait(s => s.messageSent, '确认补充消息发送', 15000, 3000)
     }
     return { status: 'greeted', detail: '招呼和补充消息已发送' }
   }
-  const outcome = await perform()
+  let outcome: ApplicationOutcome
+  try { outcome = await perform() }
+  catch (error) { throw new Error(`${contactConfirmed ? '默认招呼已发送；' : ''}${stage}失败：${error instanceof Error ? error.message : '页面异常'}`, { cause: error }) }
   // Keep the decision alongside the delivery result for review.
   return { ...outcome, ...evaluation }
 }

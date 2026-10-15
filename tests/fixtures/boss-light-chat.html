@@ -1,0 +1,28 @@
+<!doctype html><html><meta charset="utf-8"><style>
+body{font:16px sans-serif;padding:24px}a,button{display:inline-block;padding:12px}.dialog-wrap{position:fixed;inset:0;background:#0008;z-index:10}.dialog-container{position:absolute;left:100px;top:80px;width:620px;background:white;padding:24px}.input-area{display:block;width:350px;height:100px}.message-list{max-height:160px;overflow:auto}.send-message{display:inline-block;padding:12px}.disable{opacity:.5}
+</style><body><script>
+const job={id:'light-chat',title:'前端开发',company:'回归公司'};
+window.listPageId=crypto.randomUUID();
+const header='<nav><a ka="header-username">测试账号</a></nav>';
+const count=key=>localStorage.setItem(key,String(Number(localStorage.getItem(key)||0)+1));
+const trace=step=>localStorage.setItem('trace',JSON.stringify([...JSON.parse(localStorage.getItem('trace')||'[]'),step]));
+function row(message,status='success'){const li=document.createElement('li');li.className='message-item';const state=document.createElement('span');state.className='status '+status;state.textContent=status==='success'?'已发送':status==='error'?'发送失败':'发送中';const text=document.createElement('p');text.className='text';text.textContent=message;li.append(state,text);return li}
+function modal(){
+  document.querySelector('.btn-startchat').textContent='继续沟通';
+  document.body.insertAdjacentHTML('beforeend','<div class="dialog-wrap"><div class="dialog-container"><div class="dialog-title"><h3><div class="startchat-title"><div class="boss-info"><div class="name">测试 HR</div><div class="position">回归公司·招聘者</div></div></div></h3></div><div class="dialog-con"><div class="startchat-content"><div class="left"><div class="message"><ul class="message-list"></ul></div><div class="edit-area"><textarea class="input-area" placeholder="请简短描述您的问题"></textarea><div class="send-message disable">发送</div></div></div><div class="right">订阅回复消息</div></div></div></div></div>');
+  const list=document.querySelector('.message-list'),editor=document.querySelector('.input-area'),send=document.querySelector('.send-message');
+  list.append(row('网站默认招呼'));
+  if(localStorage.getItem('historical'))list.append(row('回归定制消息'));
+  editor.oninput=()=>{trace('input');send.classList.toggle('disable',!editor.value.trim())};
+  send.onclick=()=>{if(!editor.value.trim())return;trace('send');count('custom');const item=row(editor.value,localStorage.getItem('send-status')||'success');list.append(item);editor.value='';send.classList.add('disable')};
+  if(localStorage.getItem('move-input'))new MutationObserver(records=>{if(records.some(r=>r.attributeName==='data-apply-target')){editor.style.transform='translateX(50px)'}}).observe(editor,{attributes:true});
+}
+if(location.pathname.includes('/job_detail/')){
+  trace('detail-open');
+  document.body.innerHTML=header+'<h1>'+job.title+'</h1><div>'+job.company+'</div><div class="job-boss-info"><h2 class="name">测试 HR<i class="icon-vip"></i><span class="boss-active-time">刚刚活跃</span></h2><div class="boss-info-attr">'+job.company+'<em>·</em>招聘者</div></div><div class="job-sec-text">React、TypeScript</div><a class="btn-startchat">立即沟通</a>';
+  document.querySelector('.btn-startchat').onclick=()=>{trace('contact');count('contact');modal()};
+}else {
+  document.body.innerHTML=header+'<li class="job-card-box"><div class="job-title"><a class="job-name" href="/job_detail/light-chat.html">'+job.title+'</a><span class="salary">20-30K</span></div><a class="boss-info" href="/gongsi/fixture-company.html"><span class="boss-name">'+job.company+'</span></a><span class="job-area">成都</span></li><section id="preview"></section>';
+  document.querySelector('.job-card-box').onclick=e=>{e.preventDefault();trace('select');localStorage.setItem('selectedDocument',window.listPageId);document.querySelector('#preview').innerHTML='<h2>'+job.title+'</h2><a class="more-job-btn" href="/job_detail/light-chat.html">查看更多信息</a>'};
+}
+</script></body></html>
