@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import type { Command, Snapshot, ViewBounds } from '../shared/contracts'
 import { platforms, getPlatform } from './platforms'
-import type { PageInspection } from './platforms/types'
+import type { PageInspection, InteractionTarget } from './platforms/types'
 import { LocalStore } from './store'
 import { SessionVault } from './session-vault'
 import { TaskRunner } from './task-runner'
@@ -105,7 +105,7 @@ function ensureBrowser() {
     log(message, 'error')
   })
   contents.setWindowOpenHandler(({ url }) => {
-    if (adapter.isAllowedUrl(url) && !runner.running && !navigationPending) void navigate(url).catch(error => log(error.message, 'error'))
+    if (adapter.isAllowedUrl(url) && !navigationPending) void navigate(url).catch(error => log(error.message, 'error'))
     return { action: 'deny' }
   })
   const guard = (event: Electron.Event, url: string) => {
@@ -201,9 +201,32 @@ async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([page.executeJavaScript(script), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('BOSS 页面响应超时')), 8000)
+      timer = setTimeout(() => reject(new Error('读取 BOSS 页面状态超时')), 8000)
     })])
   } finally { clearTimeout(timer) }
+}
+async function interact(target: InteractionTarget, signal: AbortSignal) {
+  signal.throwIfAborted()
+  const page = liveContents()
+  if (!page || !/^ap-[a-z0-9]+$/.test(target.token)) throw new Error('页面操作目标失效')
+  const valid = await execute<boolean>(`(() => {
+    const e = document.querySelector('[data-apply-target="${target.token}"]');
+    if (!e) return false;
+    const r = e.getBoundingClientRect(), hit = document.elementFromPoint(${target.x}, ${target.y});
+    return r.width > 0 && r.height > 0 && (e === hit || e.contains(hit));
+  })()`, signal)
+  if (!valid) throw new Error('页面控件已变化或被遮挡，请在 BOSS 页面核实')
+  const zoom = page.getZoomFactor()
+  const point = { x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) }
+  page.focus()
+  page.sendInputEvent({ type: 'mouseMove', ...point })
+  page.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point })
+  page.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point })
+  if (target.fill !== undefined) {
+    page.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] })
+    page.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] })
+    await page.insertText(target.fill)
+  }
 }
 const runner = new TaskRunner({
   candidates: async (settings, signal) => {
@@ -231,7 +254,7 @@ const runner = new TaskRunner({
     return [...jobs.values()].slice(0, 100)
   },
   apply: (job, settings, signal, beforeContact) => adapter.apply({
-    listUrl: applicationListUrl, execute,
+    listUrl: applicationListUrl, execute, interact,
     beforeContact,
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {
