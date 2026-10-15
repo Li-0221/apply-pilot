@@ -3,17 +3,18 @@ export type TaskStatus = 'idle' | 'running' | 'stopping' | 'completed' | 'stoppe
 export interface Job {
   id: string; platform: string; title: string; company: string; salary: string
   location: string; tags: string[]; url: string; collectedAt: string
+  description?: string; recruiterId?: string; recruiterName?: string; hrActivity?: string; companyId?: string
   searchUrl?: string; searchKeyword?: string; searchCity?: string
 }
 export interface SearchFilters { jobType: string; salary: string; experience: string; degree: string; scale: string; industry: string; stage: string }
 export const defaultSearchFilters: SearchFilters = { jobType: '0', salary: '0', experience: '0', degree: '0', scale: '0', industry: '0', stage: '0' }
 export interface ApplicationSettings {
   keyword: string; city: string; excludedKeywords: string; limit: number
-  intervalSeconds: number; message: string; sendResume: boolean; filters: SearchFilters
+  intervalSeconds: number; message: string; sendResume: boolean; hrMaxDays: number; hrUnknown: 'include' | 'skip'; filters: SearchFilters
 }
 export const defaultSettings: ApplicationSettings = {
   keyword: '', city: '', excludedKeywords: '', limit: 1,
-  intervalSeconds: 5, message: '', sendResume: true, filters: { ...defaultSearchFilters },
+  intervalSeconds: 5, message: '', sendResume: true, hrMaxDays: 0, hrUnknown: 'include', filters: { ...defaultSearchFilters },
 }
 export interface AiSettings { enabled: boolean; baseUrl: string; model: string; resume: string; minScore: number }
 export const defaultAiSettings: AiSettings = { enabled: true, baseUrl: 'https://api.openai.com/v1', model: '', resume: '', minScore: 70 }

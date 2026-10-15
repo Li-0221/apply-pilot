@@ -32,6 +32,10 @@ export function inspectBossPage(): PageInspection {
     if (!id || !title || url.protocol !== 'https:' || !(url.hostname === 'zhipin.com' || url.hostname.endsWith('.zhipin.com'))) continue
     jobs.push({
       id, platform: 'boss', title,
+      recruiterName: text(card.querySelector('.boss-info .boss-name,.boss-info .name')).slice(0, 100),
+      hrActivity: text(card.querySelector('.boss-active-time,.boss-active,.active-time,.boss-online,.boss-info .status')).slice(0, 100),
+      recruiterId: card.querySelector('a[href*="/boss/"]')?.getAttribute('href')?.match(/\/boss\/([^/.]+)/)?.[1],
+      companyId: card.querySelector('a[href*="/gongsi/"]')?.getAttribute('href')?.match(/\/gongsi\/([^/.]+)/)?.[1],
       company: text(card.querySelector('.company-name, .boss-name')),
       salary: text(card.querySelector('.salary, .job-salary')),
       location: text(card.querySelector('.job-area, .job-area-wrapper, .company-location')),

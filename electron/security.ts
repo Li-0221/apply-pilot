@@ -92,6 +92,8 @@ export function parseSettings(value: unknown): ApplicationSettings {
   const cities = text('city', 40).split(/[,，\n;；]+/).map(s => s.trim()).filter(Boolean)
   if (keywordCount > 10 || cities.length > 10 || Math.max(keywordCount, 1) * Math.max(cities.length, 1) > 50) throw new Error('关键词或城市组合过多（最多 50 组）')
   if (cities.some(city => !bossOptions.city.some(option => option.label === city || option.value === city))) throw new Error('城市不在 BOSS 城市列表中')
-  return { filters, keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
+  const hrMaxDays = data.hrMaxDays ?? 0, hrUnknown = data.hrUnknown ?? 'include'
+  if (![0, 1, 3, 7, 14, 30].includes(Number(hrMaxDays)) || typeof hrMaxDays !== 'number' || !['include', 'skip'].includes(String(hrUnknown))) throw new Error('无效的 HR 活跃度条件')
+  return { hrMaxDays, hrUnknown: hrUnknown as ApplicationSettings['hrUnknown'], filters, keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
     message: text('message', 1000), limit: Number(data.limit), intervalSeconds: Number(data.intervalSeconds), sendResume: data.sendResume }
 }

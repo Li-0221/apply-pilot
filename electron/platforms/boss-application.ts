@@ -1,3 +1,4 @@
+import { hrSkipReason } from '../hr-activity'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ApplicationOutcome, ApplicationSettings, Job } from '../../shared/contracts'
 import type { AutomationBrowser, InteractionTarget } from './types'
@@ -7,6 +8,7 @@ interface PageState {
   selectedId: string; description: string; listReady: boolean; chat: 'new' | 'existing' | 'disabled' | 'missing'; greeted: boolean
   conversation: boolean; messageSent: boolean; resume: 'available' | 'waiting-reply' | 'missing'
   resumeSent: boolean; resumeDialog: boolean; blocked: string; acted: boolean
+  hrActivity: string; recruiterName: string; recruiterId: string;
   messageCount: number; resumeCount: number; target?: InteractionTarget
 }
 // This function runs inside the sandboxed website and uses visible DOM controls only.
@@ -22,6 +24,9 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
   const chatButton = all('a.op-btn-chat,a.btn-startchat,button[data-action="contact"]')[0]
   const chat: PageState['chat'] = !chatButton ? 'missing' : disabled(chatButton) ? 'disabled' : /继续沟通/.test(text(chatButton)) ? 'existing' : /立即沟通/.test(text(chatButton)) ? 'new' : 'missing'
   const description = all('.job-detail-body .desc,.job-sec-text,.job-detail-description').map(e => e.innerText).join('\n').trim().slice(0, 16000)
+  const hrActivity = text(document.querySelector('.boss-active-time,.boss-active,.active-time,.boss-online,.boss-info .status')).slice(0, 100)
+  const recruiterName = text(document.querySelector('.boss-info .boss-name,.boss-info .name,.boss-info .name-text')).slice(0, 100)
+  const recruiterId = document.querySelector('a[href*="/boss/"]')?.getAttribute('href')?.match(/\/boss\/([^/.]+)/)?.[1] || ''
   const body = document.body?.innerText || ''
   const blocked = /安全验证|请完成验证|访问受限|今日.*(?:沟通|上限)|沟通.*(?:达到|已达).*上限|操作频繁/.exec(body)?.[0] || ''
   const root = all('.chat-conversation')[0]
@@ -50,7 +55,7 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
     target = { token, x: r.x + r.width / 2, y: r.y + r.height / 2, fill }
   }
   let acted = false
-  if (action !== 'state' && blocked) return { selectedId, description, listReady, chat, greeted: false, conversation, messageSent, resume, resumeSent, resumeDialog: !!resumeDialog, blocked, acted, messageCount, resumeCount, target }
+  if (action !== 'state' && blocked) return { selectedId, description, listReady, chat, greeted: false, conversation, messageSent, resume, resumeSent, resumeDialog: !!resumeDialog, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, resumeCount, target }
   if (action === 'select') {
     const dismiss = all('a,button').find(e => text(e) === '留在此页')
     if (dismiss) act(dismiss)
@@ -85,7 +90,7 @@ export function bossApplicationAction(action: Action, job: Job, message: string,
       if (buttons.length === 1) { act(buttons[0]); acted = true }
     }
   }
-  return { selectedId, description, listReady, chat, greeted: /已向\s*BOSS\s*发送消息/.test(body), conversation, messageSent, resume, resumeSent, resumeDialog: !!resumeDialog, blocked, acted, messageCount, resumeCount, target }
+  return { selectedId, description, listReady, chat, greeted: /已向\s*BOSS\s*发送消息/.test(body), conversation, messageSent, resume, resumeSent, resumeDialog: !!resumeDialog, blocked, acted, hrActivity, recruiterName, recruiterId, messageCount, resumeCount, target }
 }
 
 export async function applyToBoss(browser: AutomationBrowser, job: Job, settings: ApplicationSettings, signal: AbortSignal): Promise<ApplicationOutcome> {
@@ -108,6 +113,12 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
   const perform = async (): Promise<ApplicationOutcome> => {
     await browser.navigate(job.url, signal)
     const state = await wait(s => s.selectedId === job.id && s.chat !== 'missing', '打开岗位详情')
+    job.description = state.description
+    job.hrActivity = state.hrActivity || job.hrActivity
+    job.recruiterName = state.recruiterName || job.recruiterName
+    job.recruiterId = state.recruiterId || job.recruiterId
+    const hrReason = hrSkipReason(job, settings)
+    if (hrReason) return { status: 'skipped', resume: 'not-requested', retryable: true, detail: hrReason }
     if (state.chat === 'existing') return { status: 'skipped', resume: 'not-requested', retryable: false, detail: '已沟通过，跳过重复投递' }
     if (state.chat !== 'new') return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位当前不能发起沟通' }
     const decision = await browser.evaluate(job, state.description, signal)
