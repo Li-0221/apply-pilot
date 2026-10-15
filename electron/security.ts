@@ -13,7 +13,7 @@ export function isBossUrl(value: string) {
 export function parseCommand(value: unknown): Command {
   if (!value || typeof value !== 'object' || !('type' in value)) throw new Error('无效指令')
   switch (value.type) {
-    case 'pause': case 'takeover': case 'resume': case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key': case 'cancel-resume-import':
+    case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key': case 'cancel-resume-import':
       return { type: value.type }
     case 'open':
       if (!('platform' in value) || value.platform !== 'boss') throw new Error('暂不支持该平台')
@@ -84,7 +84,6 @@ export function parseSettings(value: unknown): ApplicationSettings {
   }
   if (!Number.isInteger(data.limit) || Number(data.limit) < 1 || Number(data.limit) > 100) throw new Error('本次数量需为 1–100')
   if (!Number.isInteger(data.intervalSeconds) || Number(data.intervalSeconds) < 3 || Number(data.intervalSeconds) > 300) throw new Error('间隔需为 3–300 秒')
-  if (typeof data.sendResume !== 'boolean') throw new Error('无效的简历设置')
   const filters = { ...defaultSearchFilters }
   if (data.filters !== undefined) {
     if (!data.filters || typeof data.filters !== 'object') throw new Error('无效的筛选条件')
@@ -101,7 +100,7 @@ export function parseSettings(value: unknown): ApplicationSettings {
   const hrMaxDays = data.hrMaxDays ?? 0, hrUnknown = data.hrUnknown ?? 'include'
   if (![0, 1, 3, 7, 14, 30].includes(Number(hrMaxDays)) || typeof hrMaxDays !== 'number' || !['include', 'skip'].includes(String(hrUnknown))) throw new Error('无效的 HR 活跃度条件')
   return { hrMaxDays, hrUnknown: hrUnknown as ApplicationSettings['hrUnknown'], filters, keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
-    message: text('message', 1000), limit: Number(data.limit), intervalSeconds: Number(data.intervalSeconds), sendResume: data.sendResume }
+    message: text('message', 1000), limit: Number(data.limit), intervalSeconds: Number(data.intervalSeconds) }
 }
 
 export function parseBlacklist(value: unknown): BlacklistInput {

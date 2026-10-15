@@ -1,12 +1,12 @@
-import { blacklistValue } from '../shared/blacklist'
-import { BlacklistPanel, blacklistLabels } from './components/blacklist-panel'
+import { ApplicationRecords } from './components/application-records'
+import { BlacklistPanel } from './components/blacklist-panel'
 import { bossOptions } from '../shared/boss-options'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './components/ui/collapsible'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { useState } from 'react'
 import {
-  ArrowDownToLine, ArrowRight, BriefcaseBusiness, CircleAlert,
-  CirclePause, Globe2, ListFilter, LoaderCircle, LogOut, Monitor,
+  ArrowDownToLine, BriefcaseBusiness, CircleAlert,
+  CirclePause, Globe2, LoaderCircle, LogOut, Monitor,
   Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Terminal, Unplug, Upload,
 } from 'lucide-react'
 import type { AiSettings, ApplicationSettings, AuthStatus, Command, ResumeImportInput, Snapshot } from '../shared/contracts'
@@ -17,7 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from './components/ui/alert'
 import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './components/ui/card'
-import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from './components/ui/empty'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from './components/ui/empty'
 import { Field, FieldGroup, FieldLabel } from './components/ui/field'
 import { Input } from './components/ui/input'
 import { Checkbox } from './components/ui/checkbox'
@@ -55,7 +55,7 @@ export function App() {
     </Empty>
   )
   if (!snapshot) return <div className='p-6'><Skeleton className='h-12 w-60' /><Skeleton className='mt-6 h-96 w-full' />{error ? <p role='alert'>{error}</p> : null}</div>
-  const active = ['running', 'pausing', 'paused', 'waiting-user', 'stopping'].includes(snapshot.task.status)
+  const active = ['running', 'stopping'].includes(snapshot.task.status)
   const busy = pending || snapshot.browser.loading || active
   const current = screens.find(item => item.id === screen)!
   const focused = expanded && screen === 'workspace'
@@ -94,7 +94,7 @@ export function App() {
             <div className='ml-auto flex min-w-0 items-center gap-2'>
               {snapshot.account ? <span className='truncate text-sm'>{snapshot.account}</span> : null}
               <Badge variant={snapshot.auth === 'signed-in' ? 'default' : 'secondary'}>{authLabels[snapshot.auth]}</Badge>
-              <Button variant='outline' size='sm' disabled={pending || (active && !['paused', 'waiting-user'].includes(snapshot.task.status)) || !snapshot.browser.opened} onClick={() => void command({ type: 'check-auth' })}><RefreshCw />检查登录</Button>
+              <Button variant='outline' size='sm' disabled={busy || !snapshot.browser.opened} onClick={() => void command({ type: 'check-auth' })}><RefreshCw />检查登录</Button>
               <Button variant='outline' size='sm' disabled={pending || !snapshot.browser.opened} onClick={() => void command({ type: 'save-session' })}><ArrowDownToLine />保存会话</Button>
             </div>
           </div>
@@ -105,11 +105,11 @@ export function App() {
           {snapshot.auth === 'verification' ? <Alert><ShieldCheck /><AlertTitle>请在 Boss 页面完成安全验证</AlertTitle></Alert> : null}
           {screen === 'workspace' ? (
             <div className={cn('grid min-h-0 flex-1 gap-4', expanded ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_18rem]')}>
-              <BrowserPane snapshot={snapshot} command={command} disabled={pending || (busy && !['paused', 'waiting-user'].includes(snapshot.task.status))} expanded={expanded} onExpand={() => setExpanded(value => !value)} />
+              <BrowserPane snapshot={snapshot} command={command} disabled={busy} expanded={expanded} onExpand={() => setExpanded(value => !value)} />
               <div className={cn('min-h-0 overflow-y-auto', expanded && 'hidden')}><Delivery snapshot={snapshot} command={command} pending={pending} onAi={() => setScreen('ai')} /></div>
             </div>
           ) : null}
-          {screen === 'applications' ? <Applications snapshot={snapshot} command={command} busy={busy} onBrowse={() => setScreen('workspace')} /> : null}
+          {screen === 'applications' ? <ApplicationRecords snapshot={snapshot} command={command} busy={busy} onBrowse={() => setScreen('workspace')} /> : null}
           {screen === 'blacklist' ? <BlacklistPanel snapshot={snapshot} command={command} /> : null}
           {screen === 'logs' ? <Logs snapshot={snapshot} /> : null}
           {screen === 'ai' ? <AiForm snapshot={snapshot} command={command} importResume={importResume} busy={busy} /> : null}
@@ -122,7 +122,7 @@ export function App() {
 
 function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boolean; onAi(): void }) {
   const [settings, setSettings] = useState<ApplicationSettings>(snapshot.settings)
-  const active = ['running', 'pausing', 'paused', 'waiting-user', 'stopping'].includes(snapshot.task.status)
+  const active = ['running', 'stopping'].includes(snapshot.task.status)
   const disabled = active || pending || snapshot.browser.loading
   const change = <K extends keyof ApplicationSettings>(key: K, value: ApplicationSettings[K]) => setSettings(current => ({ ...current, [key]: value }))
   return (
@@ -144,22 +144,14 @@ function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boo
               <Field><FieldLabel htmlFor='interval'>间隔（秒）</FieldLabel><Input id='interval' type='number' min={3} max={300} required value={settings.intervalSeconds} disabled={disabled} onChange={e => change('intervalSeconds', Number(e.target.value))} /></Field>
             </FieldGroup>
             {snapshot.ai.enabled ? <Button type='button' variant='outline' onClick={onAi}><Sparkles />{snapshot.ai.keyConfigured && snapshot.ai.model && snapshot.ai.resume ? 'AI 筛选已开启' : '配置 AI 与简历'}</Button> : <Field><FieldLabel htmlFor='message'>补充消息（选填）</FieldLabel><Textarea id='message' maxLength={1000} value={settings.message} disabled={disabled} onChange={e => change('message', e.target.value)} /></Field>}
-            <Field orientation='horizontal'><Checkbox id='resume' checked={settings.sendResume} disabled={disabled} onCheckedChange={value => change('sendResume', value === true)} /><FieldLabel htmlFor='resume'>发送附件简历</FieldLabel></Field>
+
           </FieldGroup>
         </form>
         <div className='flex flex-wrap gap-2' aria-live='polite'><Badge variant='secondary'>已沟通 {snapshot.task.sent}</Badge><Badge variant='secondary'>跳过 {snapshot.task.skipped}</Badge><Badge variant='secondary'>异常 {snapshot.task.failed}</Badge></div>
         <p className='text-sm text-muted-foreground' role='status'>{active ? <LoaderCircle className='mr-2 inline size-4 animate-spin motion-reduce:animate-none' /> : null}{snapshot.task.message}</p>
       </CardContent>
       <CardFooter className='flex gap-2'>
-        {active ? <div className='flex flex-wrap gap-2'>
-          {['paused', 'waiting-user'].includes(snapshot.task.status) ? <Button disabled={pending} onClick={() => void command({ type: 'resume' })}><Play />继续投递</Button> : <Button variant='outline' disabled={pending || snapshot.task.status !== 'running'} onClick={() => void command({ type: 'pause' })}><CirclePause />暂停</Button>}
-          <Button variant='outline' disabled={pending || snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'takeover' })}>人工接管</Button>
-          <Button variant='outline' disabled={pending || snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'stop' })}>停止投递</Button>
-        </div> : <div className='flex flex-wrap gap-2'>
-          <Button form='delivery' type='submit' disabled={disabled || snapshot.auth !== 'signed-in'}><Play />开始投递</Button>
-          <Button variant='outline' disabled={disabled} onClick={() => void command({ type: 'save-settings', settings })}>保存</Button>
-          {snapshot.recovery ? <Button variant='outline' disabled={disabled || snapshot.auth !== 'signed-in'} onClick={() => void command({ type: 'resume' })}>恢复上次任务</Button> : null}
-        </div>}
+        {active ? <Button variant='outline' className='flex-1' disabled={snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'stop' })}><CirclePause />停止投递</Button> : <><Button form='delivery' type='submit' className='flex-1' disabled={disabled || snapshot.auth !== 'signed-in'}><Play />开始投递</Button><Button variant='outline' disabled={disabled} onClick={() => void command({ type: 'save-settings', settings })}>保存</Button></>}
 
       </CardFooter>
     </Card>
@@ -221,30 +213,6 @@ function AiForm({ snapshot, command, importResume, busy }: Actions & { busy: boo
         </CardFooter>
       </Card>
     </div>
-  )
-}
-
-const applicationLabels = { processing: '投递中', greeted: '已沟通', 'resume-sent': '简历已发送', skipped: '已跳过', uncertain: '待核实', failed: '失败' }
-const resumeLabels = { 'not-requested': '—', sent: '已发送', 'waiting-reply': '等待回复', unavailable: '暂不可用', uncertain: '待核实' }
-function Applications({ snapshot, command, busy, onBrowse }: Actions & { busy: boolean; onBrowse(): void }) {
-  const [query, setQuery] = useState('')
-  const records = snapshot.applications.filter(record => `${record.job.title} ${record.job.company}`.toLowerCase().includes(query.toLowerCase()))
-  return (
-    <section className='flex min-h-0 flex-1 flex-col gap-4'>
-      <div className='flex items-center justify-between gap-4'><Badge variant='secondary'>{records.length} 条记录</Badge><Field className='max-w-xs'><FieldLabel htmlFor='filter' className='sr-only'>筛选投递记录</FieldLabel><Input id='filter' placeholder='搜索岗位或公司' value={query} onChange={e => setQuery(e.target.value)} /></Field></div>
-      <div className='min-h-0 overflow-auto rounded-md border'>
-        {records.length ? <Table>
-          <TableHeader><TableRow><TableHead>职位 / 公司</TableHead><TableHead>状态</TableHead><TableHead>AI 匹配</TableHead><TableHead>附件简历</TableHead><TableHead>结果</TableHead><TableHead>时间</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
-          <TableBody>{[...records].reverse().map(record => <TableRow key={record.key}>
-            <TableCell><div className='font-medium'>{record.job.title}</div><div className='text-muted-foreground'>{record.job.company || '—'}</div></TableCell>
-            <TableCell><Badge variant={record.status === 'uncertain' || record.status === 'failed' ? 'destructive' : 'secondary'}>{applicationLabels[record.status]}</Badge></TableCell>
-            <TableCell className='max-w-xs whitespace-normal'>{record.score === undefined ? '—' : <><Badge variant='outline'>{record.score} 分</Badge><p>{record.aiReason}</p></>}</TableCell>
-            <TableCell>{resumeLabels[record.resume]}</TableCell><TableCell className='max-w-xs whitespace-normal'>{record.detail}{record.greeting ? <p className='text-muted-foreground'>{record.greeting}</p> : null}</TableCell><TableCell>{time(record.updatedAt)}</TableCell>
-            <TableCell><Button variant='ghost' size='sm' disabled={busy} onClick={async () => { if (await command({ type: 'open-job', url: record.job.url })) onBrowse() }}>查看<ArrowRight /></Button>{(['company', 'job', 'recruiter'] as const).map(kind => <Button key={kind} variant='ghost' size='sm' disabled={!blacklistValue(record.job, kind)} onClick={() => void command({ type: 'add-blacklist', entry: { platform: record.job.platform, kind, match: 'exact', value: blacklistValue(record.job, kind), label: kind === 'company' ? record.job.company : kind === 'job' ? record.job.title : record.job.recruiterName || '招聘者' } })}>拉黑{blacklistLabels[kind]}</Button>)}</TableCell>
-          </TableRow>)}</TableBody>
-        </Table> : <Empty><EmptyHeader><EmptyMedia variant='icon'><ListFilter /></EmptyMedia><EmptyTitle>{query ? '没有匹配的记录' : '暂无投递记录'}</EmptyTitle></EmptyHeader><EmptyContent><Button variant='outline' onClick={query ? () => setQuery('') : onBrowse}>{query ? '清空筛选' : '前往工作台'}</Button></EmptyContent></Empty>}
-      </div>
-    </section>
   )
 }
 

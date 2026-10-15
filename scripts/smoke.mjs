@@ -91,16 +91,16 @@ try {
   assert.equal(completed.task.status, 'completed', completed.task.message)
   assert.equal(completed.task.sent, 1)
   assert.equal(completed.applications.find(r => r.job.id === 'existing').status, 'skipped')
-  assert.equal(completed.applications.find(r => r.job.id === 'one').resume, 'waiting-reply')
+  assert.equal(completed.applications.find(r => r.job.id === 'one').status, 'greeted')
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-resume-click-one')), null, 'Disabled resume button must never be clicked')
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-one')), '1')
   await start(page, { message: '测试补充消息' })
   completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
   assert.equal(completed.task.status, 'completed', completed.task.message)
-  assert.equal(completed.applications.find(r => r.job.id === 'two').status, 'resume-sent')
+  assert.equal(completed.applications.find(r => r.job.id === 'two').status, 'greeted')
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-two')), '1')
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-message-two')), '1')
-  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-resume-two')), '1')
+  assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-resume-two')), null, 'Attachment sending has been removed')
   await page.getByRole('button', { name: '投递记录', exact: true }).click()
   await page.getByText('测试岗位 2', { exact: true }).waitFor()
   await page.screenshot({ path: join(artifacts, 'applications-fixture.png') })
@@ -121,13 +121,13 @@ try {
   // A greeting-only batch must dismiss the previous success dialog before selecting the next job.
   await remote.evaluate(() => localStorage.setItem('fixture-simple', 'yes'))
   await remote.goto('https://www.zhipin.com/web/geek/jobs')
-  await start(page, { limit: 2, message: '', sendResume: false })
+  await start(page, { limit: 2, message: '' })
   completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
   assert.equal(completed.task.status, 'completed', completed.task.message)
   assert.equal(completed.task.sent, 2)
   for (const id of ['simple-a', 'simple-b']) {
     assert.equal(await remote.evaluate(id => localStorage.getItem('fixture-contact-' + id), id), '1')
-    assert.equal(completed.applications.find(r => r.job.id === id).resume, 'not-requested')
+    assert.equal(completed.applications.find(r => r.job.id === id).status, 'greeted')
   }
   // Exercise the AI form and a local compatible provider, never a user's real credentials.
   await remote.evaluate(() => localStorage.setItem('fixture-ai', 'yes'))
@@ -185,7 +185,7 @@ try {
   assert.equal((await snapshot(page)).ai.resume, editedResume)
   resumeMode = 'normal'
   await page.screenshot({ path: join(artifacts, 'resume-markdown-fixture.png') })
-  await start(page, { limit: 1, sendResume: true })
+  await start(page, { limit: 1 })
   completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
   assert.equal(completed.task.status, 'completed', completed.task.message)
   assert.equal(completed.task.sent, 1)
@@ -202,7 +202,7 @@ try {
   await start(page)
   completed = await waitFor(page, state => ['completed', 'failed'].includes(state.task.status))
   assert.equal(completed.task.status, 'completed', completed.task.message)
-  assert.equal(completed.applications.find(r => r.job.id === 'ai-error').status, 'resume-sent')
+  assert.equal(completed.applications.find(r => r.job.id === 'ai-error').status, 'greeted')
   assert.equal(await remote.evaluate(() => localStorage.getItem('fixture-contact-ai-error')), '1')
   assert.ok(aiRequests.every(request => request.authorization === 'Bearer fixture-ai-secret'))
   assert.ok(aiRequests.filter(request => request.input.messages.length > 1 && JSON.parse(request.input.messages[1].content).job).every(request => {
@@ -250,7 +250,7 @@ try {
   await instance.page.getByRole('button', { name: '清除 Key', exact: true }).click()
   await waitFor(instance.page, state => !state.ai.keyConfigured)
   await assert.rejects(readFile(join(profile, 'ai-key.enc')), { code: 'ENOENT' })
-  console.log('Electron application smoke passed: PDF/DOCX import, Markdown editing and persistence, import failures and cancellation, AI configuration and encrypted key, compatible provider, resume/JD matching, rejection before contact, customized messages, retry after AI failure, real Start button, attachments, cancellation, restart, session isolation and logout. Fixture jobs only.')
+  console.log('Electron application smoke passed: PDF/DOCX import, Markdown editing and persistence, import failures and cancellation, AI configuration and encrypted key, compatible provider, resume/JD matching, rejection before contact, customized messages, retry after AI failure, real Start button, no attachment sends, cancellation, restart, session isolation and logout. Fixture jobs only.')
 } finally {
   if (instance) {
     const child = instance.app.process()

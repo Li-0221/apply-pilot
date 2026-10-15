@@ -27,6 +27,7 @@ let store: LocalStore
 let vault: SessionVault
 let aiKeys: AiKeyVault
 let taskAi: AiClient | null = null
+let startingTask: AbortController | null = null
 let testingAi = false
 let resumeImport: AbortController | null = null
 let state: Snapshot
@@ -233,13 +234,14 @@ const runner = new TaskRunner({
   candidates: (settings, signal) => candidateJobs(settings, adapter, {
     currentUrl: () => liveContents()?.getURL() || '',
     navigate: async (url, taskSignal) => { taskSignal.throwIfAborted(); await navigate(url); taskSignal.throwIfAborted() },
-    inspect: async () => { await runner.checkpoint(); return inspect() },
+    inspect,
     scroll: async taskSignal => { await execute(adapter.scrollScript, taskSignal) },
     log,
   }, signal),
-  apply: (job, settings, signal, beforeContact) => adapter.apply({
-    listUrl: job.searchUrl || adapter.searchUrl(settings.keyword.split(/[,，\n;；]+/)[0], settings.city.split(/[,，\n;；]+/)[0], settings.filters), execute, interact,
-    beforeContact: async () => { await runner.checkpoint(); const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); await beforeContact() },
+  apply: (job, settings, signal, beforeContact, progress) => adapter.apply({
+    execute, interact,
+    beforeContact: async () => { const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); await beforeContact() },
+    progress,
     skipReason: candidate => blacklistReason(candidate, store.value.blacklist),
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {
@@ -250,9 +252,9 @@ const runner = new TaskRunner({
   }, job, settings, signal),
   blacklist: () => store.value.blacklist,
   hasApplication: job => store.hasApplication(job),
-  record: record => { store.record(record); state.applications = store.value.applications.slice(-500); publish() },
+  record: record => { store.record(record); state.applications = store.value.applications; state.history = store.value.history; publish() },
   log,
-  saveTask: task => { store.saveTask(task); state.tasks = store.value.tasks; state.recovery = store.recovery() },
+  saveTask: task => { store.saveTask(task); state.tasks = store.value.tasks },
   update: task => { state.task = task; publish() },
 })
 
@@ -263,9 +265,9 @@ function authorize(event: IpcMainInvokeEvent) {
 }
 
 function ensureIdle(type: Command['type'] | 'import-resume') {
-  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import', 'add-blacklist', 'remove-blacklist', 'pause', 'takeover', 'resume'].includes(type) || (runner.handover && ['open', 'reload', 'login', 'check-auth', 'open-job'].includes(type))
+  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import', 'add-blacklist', 'remove-blacklist'].includes(type)
   if (testingAi && !passive) throw new Error('正在测试 AI 连接，请稍候')
-  if (runner.running && !passive) throw new Error('请先停止当前投递任务')
+  if ((runner.running || startingTask) && !passive) throw new Error('请先停止当前投递任务')
   if (navigationPending && !passive) throw new Error('页面正在加载，请稍候')
   if (resumeImport && !passive) throw new Error('正在解析简历，请稍候或取消解析')
 }
@@ -278,9 +280,9 @@ app.whenReady().then(async () => {
   state = {
     platforms: [...platforms.values()].map(platform => platform.descriptor), activePlatform: 'boss',
     auth: 'unknown', account: '', browser: { opened: false, loading: false, url: '', error: null },
-    tasks: store.value.tasks, recovery: store.recovery(),
-    task: store.recovery()?.state || { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
-    blacklist: store.value.blacklist, settings: store.value.settings, applications: store.value.applications.slice(-500), logs: [], savedAt: store.value.savedAt,
+    tasks: store.value.tasks,
+    task: { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
+    history: store.value.history, blacklist: store.value.blacklist, settings: store.value.settings, applications: store.value.applications, logs: [], savedAt: store.value.savedAt,
     ai: { ...store.value.ai, keyConfigured: aiKeys.configured },
     runtime: { electron: process.versions.electron, chromium: process.versions.chrome, node: process.versions.node, dataPath: app.getPath('userData') },
   }
@@ -307,6 +309,7 @@ app.whenReady().then(async () => {
     if (closing) return
     event.preventDefault()
     closing = true
+    startingTask?.abort()
     runner.stop()
     resumeImport?.abort()
     clearInterval(probeTimer)
@@ -404,30 +407,32 @@ app.whenReady().then(async () => {
         aiKeys.clear(); state.ai = { ...state.ai, keyConfigured: false }
         log('API Key 已清除')
         break
-      case 'pause': runner.pause(); break
-      case 'takeover': runner.pause(true); break
-      case 'resume': {
-        if (runner.running) { await inspect(); if (state.auth !== 'signed-in') throw new Error('请先登录并完成安全验证'); runner.resume(); break }
-        const recovery = store.recovery()
-        if (!recovery) throw new Error('没有可恢复的任务')
+      case 'start': {
         taskAi = store.value.ai.enabled ? new AiClient(store.value.ai, aiKeys.read()) : null
         if (taskAi && !store.value.ai.resume) throw new Error('请先填写简历内容')
-        if (!liveContents()) await navigate(adapter.entryUrl)
-        await inspect()
-        if (state.auth !== 'signed-in') throw new Error('请先登录并完成安全验证')
-        runner.start(recovery.settings, recovery)
+        const request = new AbortController()
+        startingTask = request
+        state.task = { status: 'running', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '正在打开岗位首页' }
+        publish()
+        try {
+          await navigate(adapter.entryUrl)
+          request.signal.throwIfAborted()
+          if (state.auth !== 'signed-in') throw new Error('请先登录 BOSS 直聘')
+          store.value.settings = command.settings; store.save(); state.settings = command.settings
+          log(`开始自动投递，本次最多 ${command.settings.limit} 个新岗位`)
+          runner.start(command.settings)
+        } catch (error) {
+          state.task = { ...state.task, status: request.signal.aborted ? 'stopped' : 'failed', message: request.signal.aborted ? '投递已停止' : error instanceof Error ? error.message : '开始投递失败' }
+          if (!request.signal.aborted) throw error
+          state.browser.error = null
+        } finally { startingTask = null; publish() }
         break
       }
-      case 'start':
-        taskAi = store.value.ai.enabled ? new AiClient(store.value.ai, aiKeys.read()) : null
-        if (taskAi && !store.value.ai.resume) throw new Error('请先填写简历内容')
-        await inspect()
-        if (state.auth !== 'signed-in') throw new Error('请先登录 BOSS 直聘')
-        store.value.settings = command.settings; store.save(); state.settings = command.settings
-        log(`开始自动投递，本次最多 ${command.settings.limit} 个新岗位`)
-        runner.start(command.settings)
+      case 'stop':
+        startingTask?.abort()
+        runner.stop()
+        if (navigationPending) liveContents()?.stop()
         break
-      case 'stop': runner.stop(); if (navigationPending) liveContents()?.stop(); break
       case 'open-job': await navigate(command.url); break
     }
     publish()

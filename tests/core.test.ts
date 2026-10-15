@@ -15,7 +15,7 @@ test('IPC limits application counts, intervals, message size and platform URLs',
   assert.equal(isBossUrl(job.url), true)
   for (const url of ['https://zhipin.com.evil.test', 'javascript:alert(1)', 'http://www.zhipin.com', 'https://user:pass@www.zhipin.com', 'https://www.zhipin.com:3000']) assert.equal(isBossUrl(url), false)
   for (const input of [null, {}, { type: 'execute' }, { type: 'collect', keyword: '' }, { type: 'open', platform: 'liepin' }, { type: 'open-job', url: 'https://evil.test/job_detail/one.html' }]) assert.throws(() => parseCommand(input))
-  for (const overrides of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, { intervalSeconds: 0 }, { intervalSeconds: 301 }, { keyword: 'a'.repeat(81) }, { message: 'a'.repeat(1001) }, { sendResume: 'yes' }]) assert.throws(() => parseCommand({ type: 'start', settings: { ...defaultSettings, ...overrides } }))
+  for (const overrides of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, { intervalSeconds: 0 }, { intervalSeconds: 301 }, { keyword: 'a'.repeat(81) }, { message: 'a'.repeat(1001) }]) assert.throws(() => parseCommand({ type: 'start', settings: { ...defaultSettings, ...overrides } }))
   assert.deepEqual(parseCommand({ type: 'start', settings: { ...defaultSettings, keyword: ' 前端 ' } }), { type: 'start', settings: { ...defaultSettings, keyword: '前端' } })
   assert.throws(() => parseBounds({ x: NaN, y: 0, width: 100, height: 100, visible: true }))
 })
@@ -48,7 +48,7 @@ function createHost(overrides: Partial<TaskHost> = {}) {
   const updates: TaskState[] = [], records: PendingApplication[] = [], contacted: string[] = []
   const host: TaskHost = {
     candidates: async () => [job, { ...job, id: 'two' }], hasApplication: () => false,
-    apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); contacted.push(value.id); return { status: 'greeted', resume: 'waiting-reply', detail: '招呼已发送，等待回复后才能发附件' } },
+    apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); contacted.push(value.id); return { status: 'greeted', detail: '招呼已发送' } },
     record: value => { records.push({ ...value }) }, log: () => {}, update: task => { updates.push(task) }, ...overrides,
   }
   return { host, updates, records, contacted }
@@ -57,7 +57,7 @@ async function finish(runner: TaskRunner) {
   for (let i = 0; i < 200 && runner.running; i++) await delay(2)
   assert.equal(runner.running, false)
 }
-test('quantity limit counts actual attempts and never equates greeting with attachment delivery', async () => {
+test('quantity limit counts contacts and creates a durable send intention', async () => {
   const { host, updates, records, contacted } = createHost()
   const runner = new TaskRunner(host)
   runner.start(defaultSettings)
@@ -68,7 +68,7 @@ test('quantity limit counts actual attempts and never equates greeting with atta
   assert.equal(records[1].status, 'processing')
   assert.equal(records[1].retryable, false)
   assert.equal(records[2].status, 'greeted')
-  assert.equal(records[2].resume, 'waiting-reply')
+  assert.equal(records[2].contactStarted, true)
   assert.equal(updates.at(-1)?.sent, 1)
 })
 test('history, city and exclusions skip jobs without contacting their recruiters', async () => {
@@ -123,64 +123,53 @@ test('AI failures before contact stop the task and leave the job eligible for a 
   assert.equal(contacted.length, 0)
 })
 
-async function until(predicate: () => boolean) {
-  for (let i = 0; i < 200 && !predicate(); i++) await delay(2)
-  assert.ok(predicate())
-}
-test('pause before contact yields control without sending; continue performs exactly one send', async () => {
-  let ready = false, release!: () => void
-  const { host, contacted, updates } = createHost({ apply: async (value, _settings, _signal, beforeContact) => {
-    ready = true
-    await new Promise<void>(resolve => { release = resolve })
-    await beforeContact()
-    contacted.push(value.id)
-    return { status: 'greeted', resume: 'not-requested', detail: '已发送' }
-  } })
-  const runner = new TaskRunner(host)
-  runner.start(defaultSettings)
-  await until(() => ready)
-  runner.pause(true); release()
-  await until(() => runner.handover)
-  assert.equal(updates.at(-1)?.status, 'waiting-user')
-  assert.deepEqual(contacted, [])
-  runner.resume()
-  await finish(runner)
-  assert.deepEqual(contacted, ['one'])
-})
-test('pause after contact waits for confirmation and restart recovery never repeats that contact', async () => {
-  let complete!: () => void
-  let checkpoint: import('../shared/contracts.ts').TaskCheckpoint | undefined
-  const first = createHost({
-    saveTask: value => { checkpoint = structuredClone(value) },
-    apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); first.contacted.push(value.id); await new Promise<void>(resolve => { complete = resolve }); return { status: 'greeted', resume: 'not-requested', detail: '已发送' } },
-  })
-  const runner = new TaskRunner(first.host)
-  const settings = { ...defaultSettings, limit: 2, intervalSeconds: 0 }
-  runner.start(settings)
-  await until(() => !!complete)
-  runner.pause()
-  assert.equal(runner.handover, false)
-  complete()
-  await until(() => runner.handover)
-  assert.deepEqual(first.contacted, ['one'])
-  runner.stop()
-  await finish(runner)
-  assert.equal(checkpoint?.state.status, 'stopped')
-  const second = createHost()
-  const resumed = new TaskRunner(second.host)
-  resumed.start(settings, checkpoint)
-  await finish(resumed)
-  assert.deepEqual(second.contacted, ['two'])
-  assert.equal(second.updates.at(-1)?.sent, 2)
-})
-test('security verification pauses candidate discovery until a manual continue', async () => {
-  let calls = 0
-  const fixture = createHost({ candidates: async () => { if (++calls === 1) throw new Error('请先在 BOSS 页面完成安全验证'); return [job] } })
+test('security verification ends the task without contacting a recruiter', async () => {
+  const fixture = createHost({ candidates: async () => { throw new Error('请先在 BOSS 页面完成安全验证') } })
   const runner = new TaskRunner(fixture.host)
   runner.start(defaultSettings)
-  await until(() => runner.handover)
-  assert.equal(fixture.contacted.length, 0)
-  runner.resume()
   await finish(runner)
-  assert.deepEqual(fixture.contacted, ['one'])
+  assert.equal(fixture.updates.at(-1)?.status, 'failed')
+  assert.equal(fixture.contacted.length, 0)
+})
+test('journal retains attempts and duplicate skips cannot clear an uncertain send', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'apply-pilot-journal-'))
+  try {
+    const store = new LocalStore(directory)
+    store.record({ ...record, attemptId: 'a', taskId: 'task-a', status: 'uncertain', contactStarted: true, retryable: false })
+    store.record({ ...record, attemptId: 'b', taskId: 'task-b', status: 'skipped', skipCategory: 'duplicate', retryable: true })
+    assert.equal(store.value.history.length, 2)
+    assert.equal(store.value.applications[0].status, 'uncertain')
+    assert.equal(store.hasApplication(job), true)
+    const restored = new LocalStore(directory)
+    assert.equal(restored.value.history.length, 2)
+    assert.equal(restored.hasApplication(job), true)
+    assert.equal(restored.value.applications[0].status, 'uncertain')
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+test('restart ends interrupted tasks and preserves uncertain contact deduplication', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'apply-pilot-checkpoint-'))
+  try {
+    const store = new LocalStore(directory)
+    const now = new Date().toISOString()
+    store.saveTask({ id: 'task', settings: defaultSettings, state: { id: 'task', status: 'running', attempted: 0, sent: 0, failed: 0, skipped: 0, message: '' }, startedAt: now, updatedAt: now })
+    store.record({ ...record, attemptId: 'attempt', taskId: 'task', contactStarted: true, retryable: false })
+    const restored = new LocalStore(directory)
+    assert.equal(restored.value.tasks[0].state.status, 'stopped')
+    assert.equal(restored.value.tasks[0].state.attempted, 1)
+    assert.equal(restored.value.history[0].status, 'uncertain')
+    assert.equal(restored.hasApplication(job), true)
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+test('send errors retain the AI decision and exact message in the attempt record', async () => {
+  const fixture = createHost({ apply: async (_job, _settings, _signal, beforeContact, progress) => {
+    progress({ score: 91, aiReason: 'React 匹配', greeting: '根据真实简历生成的消息' })
+    await beforeContact()
+    throw new Error('BOSS 确认补充消息发送超时')
+  } })
+  const runner = new TaskRunner(fixture.host)
+  runner.start(defaultSettings)
+  await finish(runner)
+  assert.equal(fixture.records.at(-1)?.score, 91)
+  assert.equal(fixture.records.at(-1)?.greeting, '根据真实简历生成的消息')
+  assert.equal(fixture.records.at(-1)?.status, 'uncertain')
 })
