@@ -51,6 +51,7 @@ pnpm test
 pnpm build
 pnpm test:smoke
 pnpm test:boss
+pnpm test:auth
 pnpm test:workflow
 
 pnpm start

@@ -29,6 +29,7 @@
     "package": "pnpm build && node scripts/package.mjs",
     "test:live": "node scripts/live-check.mjs",
     "test:boss": "node scripts/boss-regression.mjs",
+    "test:auth": "node scripts/auth-regression.mjs",
     "test:workflow": "node scripts/workflow-smoke.mjs"
   },
   "dependencies": {

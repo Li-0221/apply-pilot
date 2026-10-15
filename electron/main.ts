@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { blacklistReason } from '../shared/blacklist'
 import { candidateJobs } from './candidates'
+import { waitForBossLogin } from './platforms/boss-auth'
 import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -196,6 +197,17 @@ async function inspect(): Promise<PageInspection> {
   } finally { clearTimeout(timer) }
 }
 
+async function navigateForTask(url: string, signal: AbortSignal) {
+  signal.throwIfAborted()
+  await navigate(url)
+  signal.throwIfAborted()
+  if (startingTask?.signal === signal) {
+    state.task = { ...state.task, message: '正在确认登录状态' }
+    publish()
+  }
+  await waitForBossLogin(inspect, signal)
+}
+
 async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
   const page = liveContents()
@@ -233,7 +245,7 @@ async function interact(target: InteractionTarget, signal: AbortSignal) {
 const runner = new TaskRunner({
   candidates: (settings, signal) => candidateJobs(settings, adapter, {
     currentUrl: () => liveContents()?.getURL() || '',
-    navigate: async (url, taskSignal) => { taskSignal.throwIfAborted(); await navigate(url); taskSignal.throwIfAborted() },
+    navigate: navigateForTask,
     inspect,
     scroll: async taskSignal => { await execute(adapter.scrollScript, taskSignal) },
     log,
@@ -246,7 +258,7 @@ const runner = new TaskRunner({
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {
       taskSignal.throwIfAborted()
-      if (liveContents()?.getURL() !== url) await navigate(url)
+      if (liveContents()?.getURL() !== url) await navigateForTask(url, taskSignal)
       taskSignal.throwIfAborted()
     },
   }, job, settings, signal),
@@ -415,9 +427,8 @@ app.whenReady().then(async () => {
         state.task = { status: 'running', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '正在打开岗位首页' }
         publish()
         try {
-          await navigate(adapter.entryUrl)
+          await navigateForTask(adapter.entryUrl, request.signal)
           request.signal.throwIfAborted()
-          if (state.auth !== 'signed-in') throw new Error('请先登录 BOSS 直聘')
           store.value.settings = command.settings; store.save(); state.settings = command.settings
           log(`开始自动投递，本次最多 ${command.settings.limit} 个新岗位`)
           runner.start(command.settings)
