@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+release/
+.test-artifacts/
+*.tsbuildinfo
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+browser-data/
+user-data/
+boss-session.enc
+workspace.json
