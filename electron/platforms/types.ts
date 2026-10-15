@@ -13,7 +13,7 @@ export interface AutomationBrowser {
 export interface PlatformAdapter {
   descriptor: PlatformDescriptor; partition: string; entryUrl: string; loginUrl: string
   isAllowedUrl(url: string): boolean
-  searchUrl(keyword: string): string
+  searchUrl(keyword: string, city?: string, filters?: ApplicationSettings['filters']): string
   inspectScript: string; scrollScript: string
   apply(browser: AutomationBrowser, job: Job, settings: ApplicationSettings, signal: AbortSignal): Promise<ApplicationOutcome>
 }

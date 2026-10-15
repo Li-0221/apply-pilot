@@ -1,3 +1,5 @@
+import { defaultSearchFilters } from '../shared/contracts'
+import { bossOptions } from '../shared/boss-options'
 import type { AiSettings, ApplicationSettings, Command, ResumeImportInput, ViewBounds } from '../shared/contracts'
 
 export function isBossUrl(value: string) {
@@ -77,6 +79,17 @@ export function parseSettings(value: unknown): ApplicationSettings {
   if (!Number.isInteger(data.limit) || Number(data.limit) < 1 || Number(data.limit) > 100) throw new Error('本次数量需为 1–100')
   if (!Number.isInteger(data.intervalSeconds) || Number(data.intervalSeconds) < 3 || Number(data.intervalSeconds) > 300) throw new Error('间隔需为 3–300 秒')
   if (typeof data.sendResume !== 'boolean') throw new Error('无效的简历设置')
-  return { keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
+  const filters = { ...defaultSearchFilters }
+  if (data.filters !== undefined) {
+    if (!data.filters || typeof data.filters !== 'object') throw new Error('无效的筛选条件')
+    for (const key of Object.keys(filters) as (keyof typeof filters)[]) {
+      const value = (data.filters as Record<string, unknown>)[key]
+      if (typeof value !== 'string' || (value !== '0' && !bossOptions[key].some(option => option.value === value))) throw new Error(`无效的筛选条件 ${key}`)
+      filters[key] = value
+    }
+  }
+  const cities = text('city', 40).split(/[,，\n;；]+/).map(s => s.trim()).filter(Boolean)
+  if (cities.some(city => !bossOptions.city.some(option => option.label === city || option.value === city))) throw new Error('城市不在 BOSS 城市列表中')
+  return { filters, keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
     message: text('message', 1000), limit: Number(data.limit), intervalSeconds: Number(data.intervalSeconds), sendResume: data.sendResume }
 }

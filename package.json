@@ -41,6 +41,7 @@
     "fflate": "^0.8.3",
     "lucide-react": "^1.8.0",
     "mammoth": "^1.13.0",
+    "radix-ui": "^1.8.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "sonner": "^2.0.7",

@@ -1,3 +1,6 @@
+import { bossOptions } from '../shared/boss-options'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './components/ui/collapsible'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { useState } from 'react'
 import {
   ArrowDownToLine, ArrowRight, BriefcaseBusiness, CircleAlert,
@@ -125,7 +128,10 @@ function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boo
         <form id='delivery' onSubmit={event => { event.preventDefault(); void command({ type: 'start', settings }) }}>
           <FieldGroup>
             <Field><FieldLabel htmlFor='keyword'>岗位关键词</FieldLabel><Input id='keyword' maxLength={80} value={settings.keyword} disabled={disabled} onChange={e => change('keyword', e.target.value)} /></Field>
-            <Field><FieldLabel htmlFor='city'>城市</FieldLabel><Input id='city' maxLength={40} value={settings.city} disabled={disabled} onChange={e => change('city', e.target.value)} /></Field>
+            <Field><FieldLabel htmlFor='city'>城市</FieldLabel><Input id='city' list='boss-cities' maxLength={40} value={settings.city} disabled={disabled} onChange={e => change('city', e.target.value)} /><datalist id='boss-cities'>{bossOptions.city.map(option => <option key={option.value} value={option.label} />)}</datalist></Field>
+            <Collapsible><CollapsibleTrigger asChild><Button type='button' variant='outline'>岗位筛选</Button></CollapsibleTrigger><CollapsibleContent className='pt-4'>
+              <FieldGroup>{(Object.entries({ jobType: '职位类型', salary: '薪资', experience: '经验', degree: '学历', scale: '公司规模', industry: '行业', stage: '融资阶段' }) as [keyof ApplicationSettings['filters'], string][]).map(([key, label]) => <Field key={key}><FieldLabel htmlFor={'filter-' + key}>{label}</FieldLabel><Select value={settings.filters[key]} disabled={disabled} onValueChange={value => change('filters', { ...settings.filters, [key]: value })}><SelectTrigger id={'filter-' + key} className='w-full'><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value='0'>不限</SelectItem>{bossOptions[key].filter(option => option.value !== '0').map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>)}</FieldGroup>
+            </CollapsibleContent></Collapsible>
             <Field><FieldLabel htmlFor='excluded'>排除词</FieldLabel><Input id='excluded' maxLength={500} value={settings.excludedKeywords} disabled={disabled} onChange={e => change('excludedKeywords', e.target.value)} /></Field>
             <FieldGroup className='grid grid-cols-2 gap-4'>
               <Field><FieldLabel htmlFor='limit'>本次数量</FieldLabel><Input id='limit' type='number' min={1} max={100} required value={settings.limit} disabled={disabled} onChange={e => change('limit', Number(e.target.value))} /></Field>

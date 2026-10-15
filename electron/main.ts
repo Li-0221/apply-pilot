@@ -231,7 +231,7 @@ async function interact(target: InteractionTarget, signal: AbortSignal) {
 const runner = new TaskRunner({
   candidates: async (settings, signal) => {
     const current = liveContents()?.getURL()
-    applicationListUrl = settings.keyword ? adapter.searchUrl(settings.keyword)
+    applicationListUrl = settings.keyword || settings.city || Object.values(settings.filters).some(value => value !== '0') ? adapter.searchUrl(settings.keyword, settings.city, settings.filters)
       : current && new URL(current).pathname === '/web/geek/jobs' ? current : adapter.entryUrl
     if (current !== applicationListUrl) await navigate(applicationListUrl)
     const jobs = new Map<string, Snapshot['applications'][number]['job']>()

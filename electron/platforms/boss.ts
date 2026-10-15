@@ -1,3 +1,5 @@
+import { bossOptions } from '../../shared/boss-options'
+import { defaultSearchFilters, type SearchFilters } from '../../shared/contracts'
 import type { Job, AuthStatus } from '../../shared/contracts'
 import { isBossUrl } from '../security'
 import { applyToBoss } from './boss-application'
@@ -40,13 +42,22 @@ export function inspectBossPage(): PageInspection {
   return { auth, account: user ? text(user).slice(0, 50) : '', jobs: [...new Map(jobs.map(job => [job.id, job])).values()] }
 }
 
+export function bossSearchUrl(keyword: string, city = '', filters: SearchFilters = defaultSearchFilters) {
+  const params = new URLSearchParams()
+  if (keyword) params.set('query', keyword)
+  const cityOption = bossOptions.city.find(option => option.label === city || option.value === city)
+  if (city && !cityOption) throw new Error('无效的 BOSS 城市')
+  params.set('city', cityOption?.value || '100010000')
+  for (const [key, value] of Object.entries(filters)) if (value !== '0') params.set(key, value)
+  return `https://www.zhipin.com/web/geek/jobs?${params}`
+}
 export const bossAdapter: PlatformAdapter = {
   descriptor: { id: 'boss', name: 'Boss 直聘', capabilities: ['browse', 'apply'] },
   partition: 'persist:get-jobs-boss-default',
   entryUrl: 'https://www.zhipin.com/web/geek/jobs',
   loginUrl: 'https://www.zhipin.com/web/user/',
   isAllowedUrl: isBossUrl,
-  searchUrl: keyword => `https://www.zhipin.com/web/geek/jobs${keyword ? `?query=${encodeURIComponent(keyword)}` : ''}`,
+  searchUrl: bossSearchUrl,
   apply: applyToBoss,
   inspectScript: `(${inspectBossPage.toString()})()`,
   scrollScript: `(() => {
