@@ -78,18 +78,18 @@ tests/                     核心测试
 
 ## 本地数据
 
-用户目录显示在「本地设置」中。为保留独立拆分前的桌面版数据，默认仍使用系统应用数据目录下的 `Get Jobs/`；macOS 为 `~/Library/Application Support/Get Jobs/`。浏览器分区仍为 `persist:get-jobs-boss-default`。
+用户目录显示在「本地设置」中。为保留已有登录数据，沿用桌面验证版的用户目录和独立浏览器分区，具体位置以应用显示为准。
 
 - Chromium 保存 Cookie、localStorage 和 IndexedDB 等网站存储。
 - `boss-session.enc` 使用 Electron `safeStorage` 加密保存会话 Cookie；系统安全存储不可用时不会回退为明文。
 - `workspace.json` 保存岗位、关键词和最近保存时间。
-- 可用 `APPLY_PILOT_DATA_DIR` 指定其他用户目录；兼容旧变量 `GET_JOBS_DATA_DIR`，新变量优先。
+- 可用 `APPLY_PILOT_DATA_DIR` 指定其他用户目录。
 - 第三方网页禁用 Node 和 preload，启用沙箱与上下文隔离，仅允许在 BOSS 的 HTTPS 域名内导航。
 
 不会读取或迁移原 Java 项目的数据库、浏览器目录或环境配置。会话持久化不能保证永久登录，过期或安全验证仍需用户处理。本地数据、依赖和构建产物不提交到仓库。
 
 ## 许可与来源
 
-本项目从 [GET JOBS](https://github.com/loks666/get_jobs) 的桌面端验证项目独立拆分，保留上游的 **PolyForm Noncommercial 1.0.0** 许可与版权声明，详见 [LICENSE](LICENSE)。仅限许可允许的非商业用途；该许可并非 OSI 认可的开源许可。
+Apply Pilot 采用 **PolyForm Noncommercial 1.0.0** 许可，详见 [LICENSE](LICENSE)。仅限许可允许的非商业用途；该许可并非 OSI 认可的开源许可。
 
 界面中的 shadcn-admin 代码保留其 MIT 许可，见 [第三方声明](THIRD_PARTY_NOTICES.md) 和 [MIT 许可原文](licenses/shadcn-admin.MIT)。第三方代码分别遵循各自许可。
