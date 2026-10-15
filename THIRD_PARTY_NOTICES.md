@@ -17,6 +17,13 @@
 
 Field 和 Empty 组件通过 shadcn 官方 CLI 添加。
 
+## 文档解析
+
+- [unpdf](https://github.com/unjs/unpdf)：MIT，原文见 [licenses/unpdf.MIT](licenses/unpdf.MIT)。
+- [PDF.js](https://github.com/mozilla/pdf.js)：通过 unpdf 内置，采用 Apache License 2.0，原文见 [licenses/pdfjs.Apache-2.0](licenses/pdfjs.Apache-2.0)。Copyright Mozilla Foundation。
+- [Mammoth](https://github.com/mwilliamson/mammoth.js)：BSD 2-Clause，原文见 [licenses/mammoth.BSD-2-Clause](licenses/mammoth.BSD-2-Clause)。
+- [fflate](https://github.com/101arrowz/fflate)：MIT，原文见 [licenses/fflate.MIT](licenses/fflate.MIT)。
+
 ## 其他依赖
 
 React、Electron、Radix UI、Lucide、Tailwind CSS 等依赖的版本记录在 `package.json` 和 `pnpm-lock.yaml`，分别遵循各自许可。上述第三方代码的版权及许可归各自权利人所有。

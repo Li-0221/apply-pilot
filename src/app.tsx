@@ -2,9 +2,9 @@ import { useState } from 'react'
 import {
   ArrowDownToLine, ArrowRight, BriefcaseBusiness, CircleAlert,
   CirclePause, Globe2, ListFilter, LoaderCircle, LogOut, Monitor,
-  Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Terminal, Unplug,
+  Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Terminal, Unplug, Upload,
 } from 'lucide-react'
-import type { AiSettings, ApplicationSettings, AuthStatus, Command, Snapshot } from '../shared/contracts'
+import type { AiSettings, ApplicationSettings, AuthStatus, Command, ResumeImportInput, Snapshot } from '../shared/contracts'
 import { useDesktop } from './hooks/use-desktop'
 import { cn } from './lib/utils'
 import { BrowserPane } from './components/browser-pane'
@@ -40,7 +40,7 @@ const time = (value: string | null) => value ? new Date(value).toLocaleTimeStrin
 type Actions = { snapshot: Snapshot; command(input: Command): Promise<boolean | undefined> }
 
 export function App() {
-  const { snapshot, command, pending, error } = useDesktop()
+  const { snapshot, command, importResume, pending, error } = useDesktop()
   const [screen, setScreen] = useState<Screen>('workspace')
   const [expanded, setExpanded] = useState(false)
   if (!window.desktop) return (
@@ -57,7 +57,7 @@ export function App() {
     <SidebarProvider className='h-svh overflow-hidden'>
       <Sidebar collapsible='icon' variant='inset'>
         <SidebarHeader>
-          <SidebarMenu><SidebarMenuItem><SidebarMenuButton size='lg' onClick={() => setScreen('workspace')}><BriefcaseBusiness /><span className='font-bold'>Apply Pilot</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
+          <SidebarMenu><SidebarMenuItem><SidebarMenuButton size='lg' disabled={pending} onClick={() => setScreen('workspace')}><BriefcaseBusiness /><span className='font-bold'>Apply Pilot</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
@@ -65,7 +65,7 @@ export function App() {
             <SidebarMenu>
               {screens.map(item => (
                 <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton isActive={screen === item.id} tooltip={item.label} onClick={() => setScreen(item.id)}><item.icon /><span>{item.label}</span></SidebarMenuButton>
+                  <SidebarMenuButton isActive={screen === item.id} tooltip={item.label} disabled={pending} onClick={() => setScreen(item.id)}><item.icon /><span>{item.label}</span></SidebarMenuButton>
                   {item.id === 'applications' && snapshot.applications.length ? <SidebarMenuBadge>{snapshot.applications.length}</SidebarMenuBadge> : null}
                 </SidebarMenuItem>
               ))}
@@ -74,7 +74,7 @@ export function App() {
           <SidebarGroup>
             <SidebarGroupLabel>招聘平台</SidebarGroupLabel>
             <SidebarMenu>{snapshot.platforms.map(platform => (
-              <SidebarMenuItem key={platform.id}><SidebarMenuButton tooltip={platform.name} onClick={() => setScreen('workspace')}><Globe2 /><span>{platform.name}</span></SidebarMenuButton></SidebarMenuItem>
+              <SidebarMenuItem key={platform.id}><SidebarMenuButton tooltip={platform.name} disabled={pending} onClick={() => setScreen('workspace')}><Globe2 /><span>{platform.name}</span></SidebarMenuButton></SidebarMenuItem>
             ))}</SidebarMenu>
           </SidebarGroup>
         </SidebarContent>
@@ -105,7 +105,7 @@ export function App() {
           ) : null}
           {screen === 'applications' ? <Applications snapshot={snapshot} command={command} busy={busy} onBrowse={() => setScreen('workspace')} /> : null}
           {screen === 'logs' ? <Logs snapshot={snapshot} /> : null}
-          {screen === 'ai' ? <AiForm snapshot={snapshot} command={command} busy={busy} /> : null}
+          {screen === 'ai' ? <AiForm snapshot={snapshot} command={command} importResume={importResume} busy={busy} /> : null}
           {screen === 'settings' ? <Settings snapshot={snapshot} command={command} busy={busy} /> : null}
         </main>
       </SidebarInset>
@@ -145,10 +145,13 @@ function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boo
   )
 }
 
-function AiForm({ snapshot, command, busy }: Actions & { busy: boolean }) {
+function AiForm({ snapshot, command, importResume, busy }: Actions & { busy: boolean; importResume(input: ResumeImportInput): Promise<string | null | undefined> }) {
   const [settings, setSettings] = useState<AiSettings>(snapshot.ai)
   const [key, setKey] = useState('')
   const [tested, setTested] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [fileError, setFileError] = useState('')
   const change = <K extends keyof AiSettings>(name: K, value: AiSettings[K]) => { setSettings(current => ({ ...current, [name]: value })); setTested(false) }
   return (
     <div className='min-h-0 overflow-auto'>
@@ -164,7 +167,28 @@ function AiForm({ snapshot, command, busy }: Actions & { busy: boolean }) {
                 <Field><FieldLabel htmlFor='ai-model'>模型</FieldLabel><Input id='ai-model' maxLength={120} required={settings.enabled} value={settings.model} disabled={busy} onChange={e => change('model', e.target.value)} /></Field>
                 <Field><FieldLabel htmlFor='ai-score'>最低匹配分</FieldLabel><Input id='ai-score' type='number' min={0} max={100} required value={settings.minScore} disabled={busy} onChange={e => change('minScore', Number(e.target.value))} /></Field>
               </FieldGroup>
-              <Field><FieldLabel htmlFor='ai-resume'>简历内容</FieldLabel><Textarea id='ai-resume' className='min-h-64' maxLength={30000} required={settings.enabled} value={settings.resume} disabled={busy} onChange={e => change('resume', e.target.value)} /></Field>
+              <Field data-invalid={!!fileError}>
+                <FieldLabel htmlFor='resume-file'>导入简历</FieldLabel>
+                <Input id='resume-file' type='file' accept='.pdf,.docx' disabled={busy || importing} aria-invalid={!!fileError} aria-describedby={fileError ? 'resume-file-error' : undefined} onChange={e => {
+                  const selected = e.target.files?.[0] ?? null
+                  const error = selected && (!/\.(pdf|docx)$/i.test(selected.name) ? '请选择 PDF 或 DOCX 文件' : selected.size > 10 * 1024 * 1024 || !selected.size ? '简历文件需为 1 字节至 10 MB' : '')
+                  setFileError(error || ''); setFile(error ? null : selected)
+                }} />
+                {fileError ? <p id='resume-file-error' role='alert'>{fileError}</p> : null}
+                <div className='flex gap-2'>
+                  <Button type='button' variant='outline' disabled={busy || importing || !file || !settings.model || (!key && !snapshot.ai.keyConfigured)} onClick={async () => {
+                    if (!file) return
+                    setImporting(true)
+                    try {
+                      const markdown = await importResume({ name: file.name, data: await file.arrayBuffer(), settings, key })
+                      if (markdown) change('resume', markdown)
+                    } catch { setFileError('文件读取失败，请重新选择') }
+                    finally { setImporting(false) }
+                  }}>{importing ? <LoaderCircle className='animate-spin motion-reduce:animate-none' /> : <Upload />}{importing ? '解析中…' : 'AI 解析'}</Button>
+                  {importing ? <Button type='button' variant='ghost' onClick={() => void command({ type: 'cancel-resume-import' })}>取消解析</Button> : null}
+                </div>
+              </Field>
+              <Field><FieldLabel htmlFor='ai-resume'>简历内容（Markdown）{settings.resume !== snapshot.ai.resume ? <Badge variant='secondary'>待保存</Badge> : null}</FieldLabel><Textarea id='ai-resume' className='min-h-64' maxLength={30000} required={settings.enabled} value={settings.resume} disabled={busy} onChange={e => change('resume', e.target.value)} /></Field>
             </FieldGroup>
           </form>
         </CardContent>

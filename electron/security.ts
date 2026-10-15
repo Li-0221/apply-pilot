@@ -1,4 +1,4 @@
-import type { AiSettings, ApplicationSettings, Command, ViewBounds } from '../shared/contracts'
+import type { AiSettings, ApplicationSettings, Command, ResumeImportInput, ViewBounds } from '../shared/contracts'
 
 export function isBossUrl(value: string) {
   try {
@@ -11,7 +11,7 @@ export function isBossUrl(value: string) {
 export function parseCommand(value: unknown): Command {
   if (!value || typeof value !== 'object' || !('type' in value)) throw new Error('无效指令')
   switch (value.type) {
-    case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key':
+    case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key': case 'cancel-resume-import':
       return { type: value.type }
     case 'open':
       if (!('platform' in value) || value.platform !== 'boss') throw new Error('暂不支持该平台')
@@ -21,15 +21,26 @@ export function parseCommand(value: unknown): Command {
       return { type: value.type, settings: parseSettings(value.settings) }
     case 'save-ai': case 'test-ai': {
       if (!('settings' in value)) throw new Error('缺少 AI 设置')
-      const key = 'key' in value ? value.key : undefined
-      if (key !== undefined && (typeof key !== 'string' || key.length > 4096 || /[\r\n]/.test(key))) throw new Error('无效的 API Key')
-      return { type: value.type, settings: parseAiSettings(value.settings), key: key?.trim() }
+      return { type: value.type, settings: parseAiSettings(value.settings), key: parseAiKey('key' in value ? value.key : undefined) }
     }
     case 'open-job':
       if (!('url' in value) || typeof value.url !== 'string' || !isBossUrl(value.url) || !new URL(value.url).pathname.startsWith('/job_detail/')) throw new Error('无效的岗位链接')
       return { type: 'open-job', url: value.url }
     default: throw new Error('未知指令')
   }
+}
+
+function parseAiKey(key: unknown) {
+  if (key !== undefined && (typeof key !== 'string' || key.length > 4096 || /[\r\n]/.test(key))) throw new Error('无效的 API Key')
+  return key?.trim()
+}
+
+export function parseResumeImport(value: unknown): ResumeImportInput {
+  if (!value || typeof value !== 'object') throw new Error('无效的简历文件')
+  const data = value as Record<string, unknown>
+  if (typeof data.name !== 'string' || data.name.length > 255 || !/\.(pdf|docx)$/i.test(data.name)) throw new Error('请选择 PDF 或 DOCX 文件')
+  if (!(data.data instanceof ArrayBuffer) || !data.data.byteLength || data.data.byteLength > 10 * 1024 * 1024) throw new Error('简历文件需为 1 字节至 10 MB')
+  return { name: data.name, data: data.data, settings: parseAiSettings(data.settings), key: parseAiKey(data.key) }
 }
 
 export function parseAiSettings(value: unknown): AiSettings {

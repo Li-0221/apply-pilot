@@ -3,6 +3,7 @@ import type { DesktopApi, Snapshot } from '../shared/contracts'
 
 const api: DesktopApi = {
   command: command => ipcRenderer.invoke('desktop:command', command),
+  importResume: input => ipcRenderer.invoke('desktop:import-resume', input),
   setBrowserBounds: bounds => ipcRenderer.invoke('desktop:bounds', bounds),
   onSnapshot: listener => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: Snapshot) => listener(snapshot)

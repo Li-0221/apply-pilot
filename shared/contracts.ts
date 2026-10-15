@@ -15,6 +15,7 @@ export const defaultSettings: ApplicationSettings = {
 export interface AiSettings { enabled: boolean; baseUrl: string; model: string; resume: string; minScore: number }
 export const defaultAiSettings: AiSettings = { enabled: true, baseUrl: 'https://api.openai.com/v1', model: '', resume: '', minScore: 70 }
 export interface AiDecision { matched: boolean; score: number; reason: string; greeting: string }
+export interface ResumeImportInput { name: string; data: ArrayBuffer; settings: AiSettings; key?: string }
 export type ApplicationStatus = 'processing' | 'greeted' | 'resume-sent' | 'skipped' | 'uncertain' | 'failed'
 export type ResumeStatus = 'not-requested' | 'sent' | 'waiting-reply' | 'unavailable' | 'uncertain'
 export interface ApplicationOutcome {
@@ -40,11 +41,13 @@ export type Command =
   | { type: 'save-settings'; settings: ApplicationSettings }
   | { type: 'save-ai' | 'test-ai'; settings: AiSettings; key?: string }
   | { type: 'clear-ai-key' }
+  | { type: 'cancel-resume-import' }
   | { type: 'start'; settings: ApplicationSettings } | { type: 'stop' }
   | { type: 'open-job'; url: string }
 export interface ViewBounds { x: number; y: number; width: number; height: number; visible: boolean }
 export interface DesktopApi {
   command(command: Command): Promise<Snapshot>
+  importResume(input: ResumeImportInput): Promise<string | null>
   setBrowserBounds(bounds: ViewBounds): Promise<void>
   onSnapshot(listener: (snapshot: Snapshot) => void): () => void
 }

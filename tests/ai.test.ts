@@ -71,3 +71,18 @@ test('stopping aborts an in-flight AI request', async () => {
     await assert.rejects(result, { name: 'AbortError' })
   } finally { await service.close() }
 })
+test('resume conversion sends extracted text and returns editable Markdown with original facts', async () => {
+  const service = await provider(async (request, response) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    const input = JSON.parse(body)
+    assert.equal(JSON.parse(input.messages[1].content).resumeText, '测试候选人：React 项目经验')
+    assert.match(input.messages[0].content, /不得新增/)
+    assert.match(input.messages[0].content, /首行必须是 Markdown 一级标题/)
+    response.end(JSON.stringify({ choices: [{ message: { content: '# 测试候选人\n\n## 技能\n- React 项目经验' } }] }))
+  })
+  try {
+    const client = new AiClient({ ...defaultAiSettings, baseUrl: service.url, model: 'fixture' }, 'fixture-key')
+    assert.equal(await client.resumeMarkdown('测试候选人：React 项目经验', new AbortController().signal), '# 测试候选人\n\n## 技能\n- React 项目经验')
+  } finally { await service.close() }
+})

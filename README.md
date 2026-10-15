@@ -6,7 +6,8 @@
 
 - 应用内扫码登录 BOSS，在本机保存登录会话。
 - 配置兼容 OpenAI Chat Completions 的 Base URL、API Key 和模型，支持测试连接。
-- 粘贴简历内容，AI 根据岗位描述打分、筛选，并生成定制沟通消息。
+- 导入 PDF、DOCX 简历，由 AI 整理为 Markdown，支持手动编辑后保存；也可直接粘贴内容。
+- AI 根据简历与岗位描述打分、筛选，并生成定制沟通消息。
 - 按关键词、城市、排除词筛选岗位，设置投递数量和间隔。
 - 自动发起沟通、发送补充消息，并在网站允许时发送附件简历。
 - 投递记录显示匹配理由、消息和附件状态；已联系或结果待核实的岗位不会自动重复投递。
@@ -25,7 +26,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-1. 在「AI 与简历」填写 Base URL、Key、模型及简历文本，测试连接并保存。
+1. 在「AI 与简历」填写 Base URL、Key 和模型。选择 PDF 或 DOCX，点击「AI 解析」，核对并编辑 Markdown 后保存；也可直接填写简历内容。
 2. 在工作台打开 BOSS，扫码登录并完成网站安全验证。
 3. 填写岗位关键词、城市、本次数量等，点击「开始投递」。关键词留空时沿用网站当前岗位列表的筛选条件。
 4. 在「投递记录」查看匹配分、沟通消息和附件发送结果。
@@ -33,6 +34,8 @@ pnpm dev
 Base URL 可填写 `https://api.openai.com/v1`、其他兼容服务的 `/v1` 地址，或完整的 `/chat/completions` 地址。根域名会补全 `/v1/chat/completions`；有路径的地址会追加 `/chat/completions`。模型填写服务商实际支持的名称。协议依据 [Chat Completions 官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
 
 AI 请求会把简历文本及当前岗位信息发送到配置的服务商。没有配置 AI 时，可关闭「AI 筛选与定制消息」并保存，使用固定补充消息。AI 开启时，服务异常或返回无效结果会停止任务，不会自动改用固定消息继续发送；未联系的岗位可以在修复设置后重新评估。
+
+简历导入支持文字版 PDF（最多 20 页）和 DOCX，单文件不超过 10 MB。暂不支持旧版 `.doc`、加密文件或扫描图片版 PDF。本机提取的文字会发送给当前配置的 AI 服务整理，原文件不另行保存。解析结果进入编辑草稿，点击「保存」才更新已保存简历；取消或失败会保留原内容。AI 可能识别有误，请先核对姓名、联系方式、时间和经历。
 
 开发模式支持管理界面热更新，主进程或 preload 修改后需重启。
 
@@ -50,7 +53,7 @@ pnpm package
 
 `pnpm package` 生成当前系统与架构的应用，输出到 `release/`。例如 macOS Apple Silicon：`release/Apply Pilot-darwin-arm64/Apply Pilot.app`。当前尚未配置签名、公证和自动更新。
 
-测试覆盖 AI 请求协议、配置校验、停止、去重及数据迁移。集成检查使用真实 Electron、模拟 BOSS 网页和本地模拟 AI 服务，验证表单配置、Key 加密、筛选后发送、附件状态、失败重试、重启和退出登录；不会联系真实招聘者。截图保存在被 Git 忽略的 `.test-artifacts/`。模拟检查通过不能替代真实服务商和 BOSS 网站的验证。
+测试覆盖 AI 请求协议、文档文字提取、配置校验、停止、去重及数据迁移。集成检查使用真实 Electron、模拟 BOSS 网页和本地模拟 AI 服务，验证 PDF/DOCX 导入、Markdown 编辑保存与重启保留、解析取消和失败、Key 加密、筛选后发送、附件状态、失败重试和退出登录；不会联系真实招聘者。截图保存在被 Git 忽略的 `.test-artifacts/`。模拟检查通过不能替代真实服务商和 BOSS 网站的验证。
 
 可选 `pnpm test:live` 仅检查 BOSS 官方登录页，不扫码、不投递。遇到安全验证时退出码为 2。
 
@@ -62,7 +65,8 @@ shared/contracts.ts        指令、配置与状态类型
 electron/main.ts           窗口、内置浏览器、IPC 和生命周期
 electron/platforms/        平台接口、注册表与 BOSS 投递实现
 electron/task-runner.ts    筛选、任务取消与投递去重
-electron/ai.ts             简历匹配与沟通消息生成
+electron/ai.ts             简历 Markdown 整理、匹配与沟通消息生成
+electron/resume-*.ts       PDF/DOCX 文字提取、独立读取进程与取消
 electron/ai-key-vault.ts   API Key 加密存储
 electron/session-vault.ts 会话 Cookie 加密存储
 electron/store.ts          本机配置及投递记录

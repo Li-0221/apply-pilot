@@ -13,7 +13,7 @@ try {
     main: 'out/main.cjs', private: true,
   }, null, 2))
   await mkdir(join(staging, 'out'))
-  for (const file of ['main.cjs', 'preload.cjs']) await cp(join('out', file), join(staging, 'out', file))
+  for (const file of ['main.cjs', 'preload.cjs', 'resume-worker.cjs']) await cp(join('out', file), join(staging, 'out', file))
   await cp('dist', join(staging, 'dist'), { recursive: true })
   await cp('licenses', join(staging, 'licenses'), { recursive: true })
   for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) await cp(file, join(staging, file))

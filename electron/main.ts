@@ -2,7 +2,7 @@ import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type Ipc
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
-import type { Snapshot, ViewBounds } from '../shared/contracts'
+import type { Command, Snapshot, ViewBounds } from '../shared/contracts'
 import { platforms, getPlatform } from './platforms'
 import type { PageInspection } from './platforms/types'
 import { LocalStore } from './store'
@@ -10,7 +10,8 @@ import { SessionVault } from './session-vault'
 import { TaskRunner } from './task-runner'
 import { AiClient } from './ai'
 import { AiKeyVault } from './ai-key-vault'
-import { parseBounds, parseCommand } from './security'
+import { parseBounds, parseCommand, parseResumeImport } from './security'
+import { extractResumeInWorker } from './resume-import'
 
 app.setName('Apply Pilot')
 // Keep the desktop MVP profile after extraction; this is separate from the Java profile.
@@ -25,6 +26,7 @@ let vault: SessionVault
 let aiKeys: AiKeyVault
 let taskAi: AiClient | null = null
 let testingAi = false
+let resumeImport: AbortController | null = null
 let state: Snapshot
 let closing = false
 let saving: Promise<void> = Promise.resolve()
@@ -250,6 +252,14 @@ function authorize(event: IpcMainInvokeEvent) {
   if (event.senderFrame.url !== allowedUrl && event.senderFrame.url !== `${allowedUrl}/`) throw new Error('未经授权的页面')
 }
 
+function ensureIdle(type: Command['type'] | 'import-resume') {
+  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import'].includes(type)
+  if (testingAi && !passive) throw new Error('正在测试 AI 连接，请稍候')
+  if (runner.running && !passive) throw new Error('请先停止当前投递任务')
+  if (navigationPending && !passive) throw new Error('页面正在加载，请稍候')
+  if (resumeImport && !passive) throw new Error('正在解析简历，请稍候或取消解析')
+}
+
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus() } })
 
 app.whenReady().then(async () => {
@@ -287,6 +297,7 @@ app.whenReady().then(async () => {
     event.preventDefault()
     closing = true
     runner.stop()
+    resumeImport?.abort()
     clearInterval(probeTimer)
     clearTimeout(saveTimer)
     liveContents()?.stop()
@@ -299,14 +310,32 @@ app.whenReady().then(async () => {
     })
   })
   ipcMain.handle('desktop:bounds', (event, input: unknown) => { authorize(event); bounds = parseBounds(input); applyBounds() })
+  ipcMain.handle('desktop:import-resume', async (event, input: unknown) => {
+    authorize(event)
+    ensureIdle('import-resume')
+    const file = parseResumeImport(input)
+    const client = new AiClient(file.settings, file.key || aiKeys.read())
+    const controller = new AbortController()
+    resumeImport = controller
+    try {
+      const text = await extractResumeInWorker(file.name, file.data, controller.signal)
+      controller.signal.throwIfAborted()
+      const markdown = await client.resumeMarkdown(text, controller.signal)
+      controller.signal.throwIfAborted()
+      log('简历已解析，编辑后保存', 'success')
+      return markdown
+    } catch (error) {
+      if (controller.signal.aborted) return null
+      throw error
+    } finally { if (resumeImport === controller) resumeImport = null }
+  })
   ipcMain.handle('desktop:command', async (event, input: unknown) => {
     authorize(event)
     const command = parseCommand(input)
-    if (testingAi && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('正在测试 AI 连接，请稍候')
-    if (runner.running && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('请先停止当前投递任务')
-    if (navigationPending && !['snapshot', 'stop', 'save-session'].includes(command.type)) throw new Error('页面正在加载，请稍候')
+    ensureIdle(command.type)
     switch (command.type) {
       case 'snapshot': break
+      case 'cancel-resume-import': resumeImport?.abort(); break
       case 'open': await navigate(getPlatform(command.platform).entryUrl); log('Boss 页面已打开'); break
       case 'reload': {
         const url = liveContents()?.getURL()
