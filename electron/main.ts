@@ -1,6 +1,6 @@
+import { candidateJobs } from './candidates'
 import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import type { Command, Snapshot, ViewBounds } from '../shared/contracts'
 import { platforms, getPlatform } from './platforms'
@@ -178,7 +178,7 @@ async function inspect(): Promise<PageInspection> {
     ])
     // The website is untrusted; only a bounded, expected result crosses into local state.
     if (!result || !['unknown', 'checking', 'signed-out', 'signed-in', 'verification'].includes(result.auth) || typeof result.account !== 'string' || !Array.isArray(result.jobs)) throw new Error('页面返回了无效数据')
-    result.jobs = result.jobs.slice(0, 100).filter(job =>
+    result.jobs = result.jobs.slice(0, 500).filter(job =>
       job && job.platform === adapter.descriptor.id && typeof job.id === 'string' && job.id.length < 200 &&
       typeof job.title === 'string' && typeof job.company === 'string' && typeof job.salary === 'string' &&
       typeof job.location === 'string' && typeof job.collectedAt === 'string' && Array.isArray(job.tags) &&
@@ -193,7 +193,6 @@ async function inspect(): Promise<PageInspection> {
   } finally { clearTimeout(timer) }
 }
 
-let applicationListUrl = adapter.entryUrl
 async function execute<T>(script: string, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
   const page = liveContents()
@@ -229,32 +228,15 @@ async function interact(target: InteractionTarget, signal: AbortSignal) {
   }
 }
 const runner = new TaskRunner({
-  candidates: async (settings, signal) => {
-    const current = liveContents()?.getURL()
-    applicationListUrl = settings.keyword || settings.city || Object.values(settings.filters).some(value => value !== '0') ? adapter.searchUrl(settings.keyword, settings.city, settings.filters)
-      : current && new URL(current).pathname === '/web/geek/jobs' ? current : adapter.entryUrl
-    if (current !== applicationListUrl) await navigate(applicationListUrl)
-    const jobs = new Map<string, Snapshot['applications'][number]['job']>()
-    for (let pass = 0; pass < 4; pass++) {
-      for (let attempt = 0; attempt < 30; attempt++) {
-        signal.throwIfAborted()
-        const result = await inspect()
-        if (result.auth === 'verification') throw new Error('请先在 BOSS 页面完成安全验证')
-        if (result.auth === 'signed-out') throw new Error('BOSS 登录已失效，请重新登录')
-        if (result.auth === 'signed-in' && result.jobs.length) {
-          result.jobs.forEach(job => jobs.set(job.id, job))
-          break
-        }
-        if (attempt === 29) throw new Error('未找到可投递的岗位，请检查网站筛选条件或重新加载')
-        await delay(250, undefined, { signal })
-      }
-      if (jobs.size >= 100) break
-      if (pass < 3) { await execute(adapter.scrollScript, signal); await delay(500, undefined, { signal }) }
-    }
-    return [...jobs.values()].slice(0, 100)
-  },
+  candidates: (settings, signal) => candidateJobs(settings, adapter, {
+    currentUrl: () => liveContents()?.getURL() || '',
+    navigate: async (url, taskSignal) => { taskSignal.throwIfAborted(); await navigate(url); taskSignal.throwIfAborted() },
+    inspect,
+    scroll: async taskSignal => { await execute(adapter.scrollScript, taskSignal) },
+    log,
+  }, signal),
   apply: (job, settings, signal, beforeContact) => adapter.apply({
-    listUrl: applicationListUrl, execute, interact,
+    listUrl: job.searchUrl || adapter.searchUrl(settings.keyword.split(/[,，\n;；]+/)[0], settings.city.split(/[,，\n;；]+/)[0], settings.filters), execute, interact,
     beforeContact,
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {

@@ -19,3 +19,32 @@ test('all search filters reach BOSS URL with city code and encoded query', () =>
   assert.deepEqual(_oldFilters, defaultSearchFilters)
   assert.deepEqual(parseSettings(legacy).filters, defaultSearchFilters)
 })
+
+import { searchPlan, candidateJobs } from '../electron/candidates.ts'
+import { bossAdapter } from '../electron/platforms/boss.ts'
+
+test('multiple keywords and cities form a deduplicated search plan', () => {
+  const plan = searchPlan({ ...defaultSettings, keyword: '前端,React,前端', city: '成都，上海' }, bossAdapter)
+  assert.equal(plan.length, 4)
+  assert.equal(new URL(plan[3].url).searchParams.get('city'), '101020100')
+  assert.equal(new URL(plan[3].url).searchParams.get('query'), 'React')
+})
+test('candidate loading is lazy and continues beyond the former 100-job cap', async () => {
+  let url = '', inspections = 0, scrolls = 0
+  const signal = new AbortController().signal
+  const jobs = candidateJobs(defaultSettings, bossAdapter, {
+    currentUrl: () => url,
+    navigate: async next => { url = next },
+    inspect: async () => {
+      inspections++
+      return { auth: 'signed-in', account: '', jobs: Array.from({ length: 100 }, (_, i) => ({ id: String(scrolls * 100 + i), platform: 'boss', title: '前端', company: '公司', salary: '', location: '', tags: [], url: 'https://www.zhipin.com/job_detail/test.html', collectedAt: '' })) }
+    },
+    scroll: async () => { scrolls++ }, log: () => {},
+  }, signal)
+  assert.equal(inspections, 0)
+  const ids = new Set<string>()
+  for await (const job of jobs) { ids.add(job.id); if (ids.size === 101) break }
+  assert.equal(ids.size, 101)
+  assert.equal(inspections, 2)
+  assert.equal(scrolls, 1)
+})

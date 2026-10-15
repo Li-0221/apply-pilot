@@ -3,6 +3,7 @@ export type TaskStatus = 'idle' | 'running' | 'stopping' | 'completed' | 'stoppe
 export interface Job {
   id: string; platform: string; title: string; company: string; salary: string
   location: string; tags: string[]; url: string; collectedAt: string
+  searchUrl?: string; searchKeyword?: string; searchCity?: string
 }
 export interface SearchFilters { jobType: string; salary: string; experience: string; degree: string; scale: string; industry: string; stage: string }
 export const defaultSearchFilters: SearchFilters = { jobType: '0', salary: '0', experience: '0', degree: '0', scale: '0', industry: '0', stage: '0' }

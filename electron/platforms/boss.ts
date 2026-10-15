@@ -36,10 +36,10 @@ export function inspectBossPage(): PageInspection {
       salary: text(card.querySelector('.salary, .job-salary')),
       location: text(card.querySelector('.job-area, .job-area-wrapper, .company-location')),
       tags: [...card.querySelectorAll('.tag-list li, .job-info .tag-list span')].map(text).filter(Boolean),
-      url: `${url.origin}${url.pathname}`, collectedAt: new Date().toISOString(),
+      url: url.href, collectedAt: new Date().toISOString(),
     })
   }
-  return { auth, account: user ? text(user).slice(0, 50) : '', jobs: [...new Map(jobs.map(job => [job.id, job])).values()] }
+  return { auth, account: user ? text(user).slice(0, 50) : '', emptyReason: text(document.querySelector('.job-empty,.search-none,.job-list-empty')), jobs: [...new Map(jobs.map(job => [job.id, job])).values()] }
 }
 
 export function bossSearchUrl(keyword: string, city = '', filters: SearchFilters = defaultSearchFilters) {

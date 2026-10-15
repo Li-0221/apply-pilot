@@ -17,4 +17,4 @@ export interface PlatformAdapter {
   inspectScript: string; scrollScript: string
   apply(browser: AutomationBrowser, job: Job, settings: ApplicationSettings, signal: AbortSignal): Promise<ApplicationOutcome>
 }
-export interface PageInspection { auth: AuthStatus; account: string; jobs: Job[] }
+export interface PageInspection { auth: AuthStatus; account: string; jobs: Job[]; emptyReason?: string }

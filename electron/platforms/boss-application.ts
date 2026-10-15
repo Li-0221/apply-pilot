@@ -106,13 +106,7 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     throw new Error(`BOSS ${step}超时，请检查当前页面`)
   }
   const perform = async (): Promise<ApplicationOutcome> => {
-    await browser.navigate(browser.listUrl, signal)
-    try { await wait(s => s.listReady, '加载岗位列表', 3000) } catch (error) {
-      if (signal.aborted || !(error instanceof Error) || !error.message.includes('加载岗位列表超时')) throw error
-      return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位已不在当前列表，未发起沟通' }
-    }
-    const selected = await run('select')
-    if (!selected.acted && selected.selectedId !== job.id) return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位已不在当前列表，未发起沟通' }
+    await browser.navigate(job.url, signal)
     const state = await wait(s => s.selectedId === job.id && s.chat !== 'missing', '打开岗位详情')
     if (state.chat === 'existing') return { status: 'skipped', resume: 'not-requested', retryable: false, detail: '已沟通过，跳过重复投递' }
     if (state.chat !== 'new') return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位当前不能发起沟通' }

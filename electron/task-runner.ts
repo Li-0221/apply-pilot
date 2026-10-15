@@ -1,8 +1,9 @@
+import { bossOptions } from '../shared/boss-options'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ApplicationOutcome, ApplicationSettings, Job, PendingApplication, TaskState } from '../shared/contracts'
 
 export interface TaskHost {
-  candidates(settings: ApplicationSettings, signal: AbortSignal): Promise<Job[]>
+  candidates(settings: ApplicationSettings, signal: AbortSignal): Promise<Job[]> | AsyncIterable<Job>
   apply(job: Job, settings: ApplicationSettings, signal: AbortSignal, beforeContact: () => void): Promise<ApplicationOutcome>
   hasApplication(job: Job): boolean
   record(record: PendingApplication): void
@@ -35,13 +36,13 @@ export class TaskRunner {
       signal.throwIfAborted()
       const seen = new Set<string>()
       const exclusions = settings.excludedKeywords.split(/[,，\n;；]+/).map(word => word.trim().toLowerCase()).filter(Boolean)
-      for (const job of jobs) {
+      for await (const job of jobs) {
         signal.throwIfAborted()
         const key = `${job.platform}:${job.id}`
         if (seen.has(key)) continue
         seen.add(key)
         const text = `${job.title} ${job.company} ${job.tags.join(' ')}`.toLowerCase()
-        if (this.host.hasApplication(job) || (settings.city && !job.location.includes(settings.city)) || exclusions.some(word => text.includes(word))) {
+        if (this.host.hasApplication(job) || (settings.city && !settings.city.split(/[,，\n;；]+/).some(city => city.trim() === '全国' || (bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()) === '全国' || job.location.includes(bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()))) || exclusions.some(word => text.includes(word))) {
           this.task.skipped++
           continue
         }
@@ -74,6 +75,7 @@ export class TaskRunner {
         this.host.log(`${job.company || job.title} · ${job.title}：${outcome.detail}`, outcome.status === 'uncertain' || outcome.status === 'failed' ? 'error' : outcome.status === 'skipped' ? 'info' : 'success')
         if (signal.aborted) break
         if (outcome.status === 'uncertain' || outcome.status === 'failed') throw new Error(outcome.detail)
+        if (this.task.attempted >= settings.limit) break
         this.update('running', `已沟通 ${this.task.sent}，已跳过 ${this.task.skipped}`)
         if (outcome.status !== 'skipped' && this.task.attempted < settings.limit) await delay(settings.intervalSeconds * 1000, undefined, { signal })
       }
