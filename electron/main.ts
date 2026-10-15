@@ -233,13 +233,13 @@ const runner = new TaskRunner({
   candidates: (settings, signal) => candidateJobs(settings, adapter, {
     currentUrl: () => liveContents()?.getURL() || '',
     navigate: async (url, taskSignal) => { taskSignal.throwIfAborted(); await navigate(url); taskSignal.throwIfAborted() },
-    inspect,
+    inspect: async () => { await runner.checkpoint(); return inspect() },
     scroll: async taskSignal => { await execute(adapter.scrollScript, taskSignal) },
     log,
   }, signal),
   apply: (job, settings, signal, beforeContact) => adapter.apply({
     listUrl: job.searchUrl || adapter.searchUrl(settings.keyword.split(/[,，\n;；]+/)[0], settings.city.split(/[,，\n;；]+/)[0], settings.filters), execute, interact,
-    beforeContact: () => { const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); beforeContact() },
+    beforeContact: async () => { await runner.checkpoint(); const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); await beforeContact() },
     skipReason: candidate => blacklistReason(candidate, store.value.blacklist),
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {
@@ -252,6 +252,7 @@ const runner = new TaskRunner({
   hasApplication: job => store.hasApplication(job),
   record: record => { store.record(record); state.applications = store.value.applications.slice(-500); publish() },
   log,
+  saveTask: task => { store.saveTask(task); state.tasks = store.value.tasks; state.recovery = store.recovery() },
   update: task => { state.task = task; publish() },
 })
 
@@ -262,7 +263,7 @@ function authorize(event: IpcMainInvokeEvent) {
 }
 
 function ensureIdle(type: Command['type'] | 'import-resume') {
-  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import', 'add-blacklist', 'remove-blacklist'].includes(type)
+  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import', 'add-blacklist', 'remove-blacklist', 'pause', 'takeover', 'resume'].includes(type) || (runner.handover && ['open', 'reload', 'login', 'check-auth', 'open-job'].includes(type))
   if (testingAi && !passive) throw new Error('正在测试 AI 连接，请稍候')
   if (runner.running && !passive) throw new Error('请先停止当前投递任务')
   if (navigationPending && !passive) throw new Error('页面正在加载，请稍候')
@@ -277,7 +278,8 @@ app.whenReady().then(async () => {
   state = {
     platforms: [...platforms.values()].map(platform => platform.descriptor), activePlatform: 'boss',
     auth: 'unknown', account: '', browser: { opened: false, loading: false, url: '', error: null },
-    task: { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
+    tasks: store.value.tasks, recovery: store.recovery(),
+    task: store.recovery()?.state || { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
     blacklist: store.value.blacklist, settings: store.value.settings, applications: store.value.applications.slice(-500), logs: [], savedAt: store.value.savedAt,
     ai: { ...store.value.ai, keyConfigured: aiKeys.configured },
     runtime: { electron: process.versions.electron, chromium: process.versions.chrome, node: process.versions.node, dataPath: app.getPath('userData') },
@@ -402,6 +404,20 @@ app.whenReady().then(async () => {
         aiKeys.clear(); state.ai = { ...state.ai, keyConfigured: false }
         log('API Key 已清除')
         break
+      case 'pause': runner.pause(); break
+      case 'takeover': runner.pause(true); break
+      case 'resume': {
+        if (runner.running) { await inspect(); if (state.auth !== 'signed-in') throw new Error('请先登录并完成安全验证'); runner.resume(); break }
+        const recovery = store.recovery()
+        if (!recovery) throw new Error('没有可恢复的任务')
+        taskAi = store.value.ai.enabled ? new AiClient(store.value.ai, aiKeys.read()) : null
+        if (taskAi && !store.value.ai.resume) throw new Error('请先填写简历内容')
+        if (!liveContents()) await navigate(adapter.entryUrl)
+        await inspect()
+        if (state.auth !== 'signed-in') throw new Error('请先登录并完成安全验证')
+        runner.start(recovery.settings, recovery)
+        break
+      }
       case 'start':
         taskAi = store.value.ai.enabled ? new AiClient(store.value.ai, aiKeys.read()) : null
         if (taskAi && !store.value.ai.resume) throw new Error('请先填写简历内容')

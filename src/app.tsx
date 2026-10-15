@@ -55,7 +55,7 @@ export function App() {
     </Empty>
   )
   if (!snapshot) return <div className='p-6'><Skeleton className='h-12 w-60' /><Skeleton className='mt-6 h-96 w-full' />{error ? <p role='alert'>{error}</p> : null}</div>
-  const active = snapshot.task.status === 'running' || snapshot.task.status === 'stopping'
+  const active = ['running', 'pausing', 'paused', 'waiting-user', 'stopping'].includes(snapshot.task.status)
   const busy = pending || snapshot.browser.loading || active
   const current = screens.find(item => item.id === screen)!
   const focused = expanded && screen === 'workspace'
@@ -94,7 +94,7 @@ export function App() {
             <div className='ml-auto flex min-w-0 items-center gap-2'>
               {snapshot.account ? <span className='truncate text-sm'>{snapshot.account}</span> : null}
               <Badge variant={snapshot.auth === 'signed-in' ? 'default' : 'secondary'}>{authLabels[snapshot.auth]}</Badge>
-              <Button variant='outline' size='sm' disabled={busy || !snapshot.browser.opened} onClick={() => void command({ type: 'check-auth' })}><RefreshCw />检查登录</Button>
+              <Button variant='outline' size='sm' disabled={pending || (active && !['paused', 'waiting-user'].includes(snapshot.task.status)) || !snapshot.browser.opened} onClick={() => void command({ type: 'check-auth' })}><RefreshCw />检查登录</Button>
               <Button variant='outline' size='sm' disabled={pending || !snapshot.browser.opened} onClick={() => void command({ type: 'save-session' })}><ArrowDownToLine />保存会话</Button>
             </div>
           </div>
@@ -105,7 +105,7 @@ export function App() {
           {snapshot.auth === 'verification' ? <Alert><ShieldCheck /><AlertTitle>请在 Boss 页面完成安全验证</AlertTitle></Alert> : null}
           {screen === 'workspace' ? (
             <div className={cn('grid min-h-0 flex-1 gap-4', expanded ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_18rem]')}>
-              <BrowserPane snapshot={snapshot} command={command} disabled={busy} expanded={expanded} onExpand={() => setExpanded(value => !value)} />
+              <BrowserPane snapshot={snapshot} command={command} disabled={pending || (busy && !['paused', 'waiting-user'].includes(snapshot.task.status))} expanded={expanded} onExpand={() => setExpanded(value => !value)} />
               <div className={cn('min-h-0 overflow-y-auto', expanded && 'hidden')}><Delivery snapshot={snapshot} command={command} pending={pending} onAi={() => setScreen('ai')} /></div>
             </div>
           ) : null}
@@ -122,7 +122,7 @@ export function App() {
 
 function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boolean; onAi(): void }) {
   const [settings, setSettings] = useState<ApplicationSettings>(snapshot.settings)
-  const active = snapshot.task.status === 'running' || snapshot.task.status === 'stopping'
+  const active = ['running', 'pausing', 'paused', 'waiting-user', 'stopping'].includes(snapshot.task.status)
   const disabled = active || pending || snapshot.browser.loading
   const change = <K extends keyof ApplicationSettings>(key: K, value: ApplicationSettings[K]) => setSettings(current => ({ ...current, [key]: value }))
   return (
@@ -151,7 +151,16 @@ function Delivery({ snapshot, command, pending, onAi }: Actions & { pending: boo
         <p className='text-sm text-muted-foreground' role='status'>{active ? <LoaderCircle className='mr-2 inline size-4 animate-spin motion-reduce:animate-none' /> : null}{snapshot.task.message}</p>
       </CardContent>
       <CardFooter className='flex gap-2'>
-        {active ? <Button variant='outline' className='flex-1' disabled={pending || snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'stop' })}><CirclePause />停止投递</Button> : <><Button form='delivery' type='submit' className='flex-1' disabled={disabled || snapshot.auth !== 'signed-in'}><Play />开始投递</Button><Button variant='outline' disabled={disabled} onClick={() => void command({ type: 'save-settings', settings })}>保存</Button></>}
+        {active ? <div className='flex flex-wrap gap-2'>
+          {['paused', 'waiting-user'].includes(snapshot.task.status) ? <Button disabled={pending} onClick={() => void command({ type: 'resume' })}><Play />继续投递</Button> : <Button variant='outline' disabled={pending || snapshot.task.status !== 'running'} onClick={() => void command({ type: 'pause' })}><CirclePause />暂停</Button>}
+          <Button variant='outline' disabled={pending || snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'takeover' })}>人工接管</Button>
+          <Button variant='outline' disabled={pending || snapshot.task.status === 'stopping'} onClick={() => void command({ type: 'stop' })}>停止投递</Button>
+        </div> : <div className='flex flex-wrap gap-2'>
+          <Button form='delivery' type='submit' disabled={disabled || snapshot.auth !== 'signed-in'}><Play />开始投递</Button>
+          <Button variant='outline' disabled={disabled} onClick={() => void command({ type: 'save-settings', settings })}>保存</Button>
+          {snapshot.recovery ? <Button variant='outline' disabled={disabled || snapshot.auth !== 'signed-in'} onClick={() => void command({ type: 'resume' })}>恢复上次任务</Button> : null}
+        </div>}
+
       </CardFooter>
     </Card>
   )

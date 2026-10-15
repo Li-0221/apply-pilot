@@ -48,7 +48,7 @@ function createHost(overrides: Partial<TaskHost> = {}) {
   const updates: TaskState[] = [], records: PendingApplication[] = [], contacted: string[] = []
   const host: TaskHost = {
     candidates: async () => [job, { ...job, id: 'two' }], hasApplication: () => false,
-    apply: async (value, _settings, _signal, beforeContact) => { beforeContact(); contacted.push(value.id); return { status: 'greeted', resume: 'waiting-reply', detail: '招呼已发送，等待回复后才能发附件' } },
+    apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); contacted.push(value.id); return { status: 'greeted', resume: 'waiting-reply', detail: '招呼已发送，等待回复后才能发附件' } },
     record: value => { records.push({ ...value }) }, log: () => {}, update: task => { updates.push(task) }, ...overrides,
   }
   return { host, updates, records, contacted }
@@ -79,7 +79,7 @@ test('history, city and exclusions skip jobs without contacting their recruiters
   assert.deepEqual(contacted, ['ok'])
 })
 test('uncertain external results stop the batch instead of retrying or contacting the next job', async () => {
-  const { host, updates, records, contacted } = createHost({ apply: async (value, _settings, _signal, beforeContact) => { beforeContact(); contacted.push(value.id); throw new Error('network disconnected after click') } })
+  const { host, updates, records, contacted } = createHost({ apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); contacted.push(value.id); throw new Error('network disconnected after click') } })
   const runner = new TaskRunner(host)
   runner.start({ ...defaultSettings, limit: 3 })
   await finish(runner)
@@ -89,7 +89,7 @@ test('uncertain external results stop the batch instead of retrying or contactin
 })
 test('stop during a send preserves confirmed results and prevents the next contact', async () => {
   let complete!: (value: Awaited<ReturnType<TaskHost['apply']>>) => void
-  const { host, updates, records, contacted } = createHost({ apply: async (value, _settings, _signal, beforeContact) => { beforeContact(); contacted.push(value.id); return new Promise(resolve => { complete = resolve }) } })
+  const { host, updates, records, contacted } = createHost({ apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); contacted.push(value.id); return new Promise(resolve => { complete = resolve }) } })
   const runner = new TaskRunner(host)
   runner.start({ ...defaultSettings, limit: 3 })
   await delay(0)
@@ -106,6 +106,7 @@ test('stop during list loading never creates an application intention or sends a
   const { host, records, contacted, updates } = createHost({ candidates: () => new Promise(resolve => { loaded = resolve }) })
   const runner = new TaskRunner(host)
   runner.start(defaultSettings)
+  await delay(0)
   runner.stop(); loaded([job])
   await finish(runner)
   assert.equal(records.length, 0); assert.equal(contacted.length, 0)
@@ -120,4 +121,66 @@ test('AI failures before contact stop the task and leave the job eligible for a 
   assert.equal(records.at(-1)?.retryable, true)
   assert.equal(updates.at(-1)?.status, 'failed')
   assert.equal(contacted.length, 0)
+})
+
+async function until(predicate: () => boolean) {
+  for (let i = 0; i < 200 && !predicate(); i++) await delay(2)
+  assert.ok(predicate())
+}
+test('pause before contact yields control without sending; continue performs exactly one send', async () => {
+  let ready = false, release!: () => void
+  const { host, contacted, updates } = createHost({ apply: async (value, _settings, _signal, beforeContact) => {
+    ready = true
+    await new Promise<void>(resolve => { release = resolve })
+    await beforeContact()
+    contacted.push(value.id)
+    return { status: 'greeted', resume: 'not-requested', detail: '已发送' }
+  } })
+  const runner = new TaskRunner(host)
+  runner.start(defaultSettings)
+  await until(() => ready)
+  runner.pause(true); release()
+  await until(() => runner.handover)
+  assert.equal(updates.at(-1)?.status, 'waiting-user')
+  assert.deepEqual(contacted, [])
+  runner.resume()
+  await finish(runner)
+  assert.deepEqual(contacted, ['one'])
+})
+test('pause after contact waits for confirmation and restart recovery never repeats that contact', async () => {
+  let complete!: () => void
+  let checkpoint: import('../shared/contracts.ts').TaskCheckpoint | undefined
+  const first = createHost({
+    saveTask: value => { checkpoint = structuredClone(value) },
+    apply: async (value, _settings, _signal, beforeContact) => { await beforeContact(); first.contacted.push(value.id); await new Promise<void>(resolve => { complete = resolve }); return { status: 'greeted', resume: 'not-requested', detail: '已发送' } },
+  })
+  const runner = new TaskRunner(first.host)
+  const settings = { ...defaultSettings, limit: 2, intervalSeconds: 0 }
+  runner.start(settings)
+  await until(() => !!complete)
+  runner.pause()
+  assert.equal(runner.handover, false)
+  complete()
+  await until(() => runner.handover)
+  assert.deepEqual(first.contacted, ['one'])
+  runner.stop()
+  await finish(runner)
+  assert.equal(checkpoint?.state.status, 'stopped')
+  const second = createHost()
+  const resumed = new TaskRunner(second.host)
+  resumed.start(settings, checkpoint)
+  await finish(resumed)
+  assert.deepEqual(second.contacted, ['two'])
+  assert.equal(second.updates.at(-1)?.sent, 2)
+})
+test('security verification pauses candidate discovery until a manual continue', async () => {
+  let calls = 0
+  const fixture = createHost({ candidates: async () => { if (++calls === 1) throw new Error('请先在 BOSS 页面完成安全验证'); return [job] } })
+  const runner = new TaskRunner(fixture.host)
+  runner.start(defaultSettings)
+  await until(() => runner.handover)
+  assert.equal(fixture.contacted.length, 0)
+  runner.resume()
+  await finish(runner)
+  assert.deepEqual(fixture.contacted, ['one'])
 })

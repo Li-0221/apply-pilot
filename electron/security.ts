@@ -13,7 +13,7 @@ export function isBossUrl(value: string) {
 export function parseCommand(value: unknown): Command {
   if (!value || typeof value !== 'object' || !('type' in value)) throw new Error('无效指令')
   switch (value.type) {
-    case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key': case 'cancel-resume-import':
+    case 'pause': case 'takeover': case 'resume': case 'snapshot': case 'reload': case 'login': case 'check-auth': case 'save-session': case 'logout': case 'stop': case 'clear-ai-key': case 'cancel-resume-import':
       return { type: value.type }
     case 'open':
       if (!('platform' in value) || value.platform !== 'boss') throw new Error('暂不支持该平台')

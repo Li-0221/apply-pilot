@@ -8,7 +8,7 @@ export interface AutomationBrowser {
   evaluate(job: Job, description: string, signal: AbortSignal): Promise<AiDecision | null>
   interact(target: InteractionTarget, signal: AbortSignal): Promise<void>
   skipReason(job: Job): string | null
-  beforeContact(): void
+  beforeContact(): Promise<void>
 }
 // Each platform owns its own selectors, navigation and application sequence.
 export interface PlatformAdapter {

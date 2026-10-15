@@ -126,7 +126,7 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     if (decision) evaluation = { score: decision.score, aiReason: decision.reason, greeting: decision.matched ? decision.greeting : undefined }
     if (decision && !decision.matched) return { status: 'skipped', resume: 'not-requested', retryable: true, detail: `AI 不匹配（${decision.score}）：${decision.reason}` }
     if (decision) message = decision.greeting
-    browser.beforeContact()
+    await browser.beforeContact()
     const contact = await run('contact')
     if (!contact.acted) return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位状态已变化，未发起沟通' }
     await wait(s => s.greeted || s.conversation || s.chat === 'existing', '确认首次招呼')
