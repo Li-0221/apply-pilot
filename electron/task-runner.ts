@@ -1,10 +1,12 @@
+import { blacklistReason } from '../shared/blacklist'
 import { bossOptions } from '../shared/boss-options'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ApplicationOutcome, ApplicationSettings, Job, PendingApplication, TaskState } from '../shared/contracts'
+import type { ApplicationOutcome, ApplicationSettings, BlacklistEntry, Job, PendingApplication, TaskState } from '../shared/contracts'
 
 export interface TaskHost {
   candidates(settings: ApplicationSettings, signal: AbortSignal): Promise<Job[]> | AsyncIterable<Job>
   apply(job: Job, settings: ApplicationSettings, signal: AbortSignal, beforeContact: () => void): Promise<ApplicationOutcome>
+  blacklist?(): BlacklistEntry[]
   hasApplication(job: Job): boolean
   record(record: PendingApplication): void
   log(message: string, level?: 'info' | 'success' | 'error'): void
@@ -42,7 +44,7 @@ export class TaskRunner {
         if (seen.has(key)) continue
         seen.add(key)
         const text = `${job.title} ${job.company} ${job.tags.join(' ')}`.toLowerCase()
-        if (this.host.hasApplication(job) || (settings.city && !settings.city.split(/[,，\n;；]+/).some(city => city.trim() === '全国' || (bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()) === '全国' || job.location.includes(bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()))) || exclusions.some(word => text.includes(word))) {
+        if (blacklistReason(job, this.host.blacklist?.() || []) || this.host.hasApplication(job) || (settings.city && !settings.city.split(/[,，\n;；]+/).some(city => city.trim() === '全国' || (bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()) === '全国' || job.location.includes(bossOptions.city.find(option => option.value === city.trim())?.label || city.trim()))) || exclusions.some(word => text.includes(word))) {
           this.task.skipped++
           continue
         }

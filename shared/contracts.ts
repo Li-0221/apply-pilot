@@ -31,12 +31,14 @@ export interface PendingApplication extends Omit<ApplicationRecord, 'status'> { 
 export interface PlatformDescriptor { id: string; name: string; capabilities: ('browse' | 'apply')[] }
 export interface LogEntry { id: number; time: string; level: 'info' | 'success' | 'error'; message: string }
 export interface TaskState { status: TaskStatus; attempted: number; sent: number; skipped: number; failed: number; message: string }
+export interface BlacklistEntry { id: string; platform: string; kind: 'company' | 'job' | 'recruiter'; match: 'exact' | 'contains'; value: string; label: string; createdAt: string }
+export type BlacklistInput = Pick<BlacklistEntry, 'platform' | 'kind' | 'match' | 'value' | 'label'>
 export interface Snapshot {
   platforms: PlatformDescriptor[]; activePlatform: string; auth: AuthStatus; account: string
   browser: { opened: boolean; loading: boolean; url: string; error: string | null }
   task: TaskState; settings: ApplicationSettings; applications: PendingApplication[]
   ai: AiSettings & { keyConfigured: boolean }
-  logs: LogEntry[]; savedAt: string | null
+  blacklist: BlacklistEntry[]; logs: LogEntry[]; savedAt: string | null
   runtime: { electron: string; chromium: string; node: string; dataPath: string }
 }
 export type Command =
@@ -47,6 +49,7 @@ export type Command =
   | { type: 'clear-ai-key' }
   | { type: 'cancel-resume-import' }
   | { type: 'start'; settings: ApplicationSettings } | { type: 'stop' }
+  | { type: 'add-blacklist'; entry: BlacklistInput } | { type: 'remove-blacklist'; id: string }
   | { type: 'open-job'; url: string }
 export interface ViewBounds { x: number; y: number; width: number; height: number; visible: boolean }
 export interface DesktopApi {

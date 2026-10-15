@@ -1,6 +1,6 @@
 import { defaultSearchFilters } from '../shared/contracts'
 import { bossOptions } from '../shared/boss-options'
-import type { AiSettings, ApplicationSettings, Command, ResumeImportInput, ViewBounds } from '../shared/contracts'
+import type { AiSettings, ApplicationSettings, BlacklistInput, Command, ResumeImportInput, ViewBounds } from '../shared/contracts'
 
 export function isBossUrl(value: string) {
   try {
@@ -25,6 +25,12 @@ export function parseCommand(value: unknown): Command {
       if (!('settings' in value)) throw new Error('缺少 AI 设置')
       return { type: value.type, settings: parseAiSettings(value.settings), key: parseAiKey('key' in value ? value.key : undefined) }
     }
+    case 'add-blacklist':
+      if (!('entry' in value)) throw new Error('缺少黑名单条目')
+      return { type: 'add-blacklist', entry: parseBlacklist(value.entry) }
+    case 'remove-blacklist':
+      if (!('id' in value) || typeof value.id !== 'string' || value.id.length > 100) throw new Error('无效的黑名单条目')
+      return { type: 'remove-blacklist', id: value.id }
     case 'open-job':
       if (!('url' in value) || typeof value.url !== 'string' || !isBossUrl(value.url) || !new URL(value.url).pathname.startsWith('/job_detail/')) throw new Error('无效的岗位链接')
       return { type: 'open-job', url: value.url }
@@ -96,4 +102,13 @@ export function parseSettings(value: unknown): ApplicationSettings {
   if (![0, 1, 3, 7, 14, 30].includes(Number(hrMaxDays)) || typeof hrMaxDays !== 'number' || !['include', 'skip'].includes(String(hrUnknown))) throw new Error('无效的 HR 活跃度条件')
   return { hrMaxDays, hrUnknown: hrUnknown as ApplicationSettings['hrUnknown'], filters, keyword: text('keyword', 80), city: text('city', 40), excludedKeywords: text('excludedKeywords', 500),
     message: text('message', 1000), limit: Number(data.limit), intervalSeconds: Number(data.intervalSeconds), sendResume: data.sendResume }
+}
+
+export function parseBlacklist(value: unknown): BlacklistInput {
+  if (!value || typeof value !== 'object') throw new Error('无效的黑名单条目')
+  const entry = value as Record<string, unknown>
+  if (entry.platform !== 'boss' || !['company', 'job', 'recruiter'].includes(String(entry.kind)) || !['exact', 'contains'].includes(String(entry.match))) throw new Error('无效的黑名单类型')
+  if (typeof entry.value !== 'string' || !entry.value.trim() || entry.value.length > 300 || typeof entry.label !== 'string' || entry.label.length > 200) throw new Error('无效的黑名单内容')
+  if (entry.match === 'exact' && !/^(id|name):.+/.test(entry.value.trim())) throw new Error('精确匹配需使用 id: 或 name:')
+  return { platform: 'boss', kind: entry.kind as BlacklistInput['kind'], match: entry.match as BlacklistInput['match'], value: entry.value.trim(), label: entry.label.trim() }
 }

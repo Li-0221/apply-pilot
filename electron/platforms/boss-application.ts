@@ -117,7 +117,7 @@ export async function applyToBoss(browser: AutomationBrowser, job: Job, settings
     job.hrActivity = state.hrActivity || job.hrActivity
     job.recruiterName = state.recruiterName || job.recruiterName
     job.recruiterId = state.recruiterId || job.recruiterId
-    const hrReason = hrSkipReason(job, settings)
+    const hrReason = browser.skipReason(job) || hrSkipReason(job, settings)
     if (hrReason) return { status: 'skipped', resume: 'not-requested', retryable: true, detail: hrReason }
     if (state.chat === 'existing') return { status: 'skipped', resume: 'not-requested', retryable: false, detail: '已沟通过，跳过重复投递' }
     if (state.chat !== 'new') return { status: 'skipped', resume: 'not-requested', retryable: true, detail: '岗位当前不能发起沟通' }

@@ -7,6 +7,7 @@ export interface AutomationBrowser {
   execute<T>(script: string, signal: AbortSignal): Promise<T>
   evaluate(job: Job, description: string, signal: AbortSignal): Promise<AiDecision | null>
   interact(target: InteractionTarget, signal: AbortSignal): Promise<void>
+  skipReason(job: Job): string | null
   beforeContact(): void
 }
 // Each platform owns its own selectors, navigation and application sequence.

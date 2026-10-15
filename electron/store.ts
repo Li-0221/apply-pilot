@@ -1,12 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { defaultAiSettings, defaultSettings, type AiSettings, type ApplicationSettings, type Job, type PendingApplication } from '../shared/contracts'
+import { defaultAiSettings, defaultSettings, type AiSettings, type BlacklistEntry, type ApplicationSettings, type Job, type PendingApplication } from '../shared/contracts'
 import { parseAiSettings, parseSettings } from './security'
 
-interface SavedState { version: 2; settings: ApplicationSettings; ai: AiSettings; applications: PendingApplication[]; savedAt: string | null; jobs: Job[] }
+interface SavedState { version: 3; blacklist: BlacklistEntry[]; settings: ApplicationSettings; ai: AiSettings; applications: PendingApplication[]; savedAt: string | null; jobs: Job[] }
 export class LocalStore {
   private readonly file: string
-  value: SavedState = { version: 2, settings: { ...defaultSettings }, ai: { ...defaultAiSettings }, applications: [], savedAt: null, jobs: [] }
+  value: SavedState = { version: 3, blacklist: [], settings: { ...defaultSettings }, ai: { ...defaultAiSettings }, applications: [], savedAt: null, jobs: [] }
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     this.file = join(directory, 'workspace.json')
@@ -14,8 +14,8 @@ export class LocalStore {
       const data = JSON.parse(readFileSync(this.file, 'utf8'))
       if (data.version === 1 && typeof data.keyword === 'string' && Array.isArray(data.jobs)) {
         this.value = { ...this.value, settings: { ...defaultSettings, keyword: data.keyword }, jobs: data.jobs, savedAt: data.savedAt ?? null }
-      } else if (data.version === 2 && Array.isArray(data.applications) && Array.isArray(data.jobs)) {
-        this.value = { version: 2, settings: parseSettings(data.settings), ai: data.ai ? parseAiSettings(data.ai) : { ...defaultAiSettings }, applications: data.applications, jobs: data.jobs, savedAt: data.savedAt ?? null }
+      } else if ([2, 3].includes(data.version) && Array.isArray(data.applications) && Array.isArray(data.jobs)) {
+        this.value = { version: 3, blacklist: Array.isArray(data.blacklist) ? data.blacklist : [], settings: parseSettings(data.settings), ai: data.ai ? parseAiSettings(data.ai) : { ...defaultAiSettings }, applications: data.applications, jobs: data.jobs, savedAt: data.savedAt ?? null }
       } else throw new Error('不支持的本地数据格式')
       for (const record of this.value.applications) {
         if (record.status === 'processing') {

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { blacklistReason } from '../shared/blacklist'
 import { candidateJobs } from './candidates'
 import { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
@@ -237,7 +239,8 @@ const runner = new TaskRunner({
   }, signal),
   apply: (job, settings, signal, beforeContact) => adapter.apply({
     listUrl: job.searchUrl || adapter.searchUrl(settings.keyword.split(/[,，\n;；]+/)[0], settings.city.split(/[,，\n;；]+/)[0], settings.filters), execute, interact,
-    beforeContact,
+    beforeContact: () => { const reason = blacklistReason(job, store.value.blacklist); if (reason) throw new Error(reason); beforeContact() },
+    skipReason: candidate => blacklistReason(candidate, store.value.blacklist),
     evaluate: (candidate, description, taskSignal) => taskAi ? taskAi.evaluate(candidate, description, taskSignal) : Promise.resolve(null),
     navigate: async (url, taskSignal) => {
       taskSignal.throwIfAborted()
@@ -245,6 +248,7 @@ const runner = new TaskRunner({
       taskSignal.throwIfAborted()
     },
   }, job, settings, signal),
+  blacklist: () => store.value.blacklist,
   hasApplication: job => store.hasApplication(job),
   record: record => { store.record(record); state.applications = store.value.applications.slice(-500); publish() },
   log,
@@ -258,7 +262,7 @@ function authorize(event: IpcMainInvokeEvent) {
 }
 
 function ensureIdle(type: Command['type'] | 'import-resume') {
-  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import'].includes(type)
+  const passive = ['snapshot', 'stop', 'save-session', 'cancel-resume-import', 'add-blacklist', 'remove-blacklist'].includes(type)
   if (testingAi && !passive) throw new Error('正在测试 AI 连接，请稍候')
   if (runner.running && !passive) throw new Error('请先停止当前投递任务')
   if (navigationPending && !passive) throw new Error('页面正在加载，请稍候')
@@ -274,7 +278,7 @@ app.whenReady().then(async () => {
     platforms: [...platforms.values()].map(platform => platform.descriptor), activePlatform: 'boss',
     auth: 'unknown', account: '', browser: { opened: false, loading: false, url: '', error: null },
     task: { status: 'idle', attempted: 0, sent: 0, skipped: 0, failed: 0, message: '等待开始' },
-    settings: store.value.settings, applications: store.value.applications.slice(-500), logs: [], savedAt: store.value.savedAt,
+    blacklist: store.value.blacklist, settings: store.value.settings, applications: store.value.applications.slice(-500), logs: [], savedAt: store.value.savedAt,
     ai: { ...store.value.ai, keyConfigured: aiKeys.configured },
     runtime: { electron: process.versions.electron, chromium: process.versions.chrome, node: process.versions.node, dataPath: app.getPath('userData') },
   }
@@ -340,6 +344,15 @@ app.whenReady().then(async () => {
     ensureIdle(command.type)
     switch (command.type) {
       case 'snapshot': break
+      case 'add-blacklist':
+        if (store.value.blacklist.length >= 2000) throw new Error('黑名单最多 2000 条')
+        if (!store.value.blacklist.some(entry => entry.platform === command.entry.platform && entry.kind === command.entry.kind && entry.match === command.entry.match && entry.value === command.entry.value)) store.value.blacklist.push({ ...command.entry, id: randomUUID(), createdAt: new Date().toISOString() })
+        store.save(); state.blacklist = [...store.value.blacklist]; log('已加入黑名单', 'success')
+        break
+      case 'remove-blacklist':
+        store.value.blacklist = store.value.blacklist.filter(entry => entry.id !== command.id)
+        store.save(); state.blacklist = [...store.value.blacklist]; log('已移出黑名单')
+        break
       case 'cancel-resume-import': resumeImport?.abort(); break
       case 'open': await navigate(getPlatform(command.platform).entryUrl); log('Boss 页面已打开'); break
       case 'reload': {

@@ -1,3 +1,5 @@
+import { blacklistValue } from '../shared/blacklist'
+import { BlacklistPanel, blacklistLabels } from './components/blacklist-panel'
 import { bossOptions } from '../shared/boss-options'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './components/ui/collapsible'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
@@ -30,10 +32,11 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './components/ui/table'
 
 const authLabels: Record<AuthStatus, string> = { unknown: '等待检查', checking: '检查中', 'signed-out': '未登录', 'signed-in': '已登录', verification: '需要验证' }
-type Screen = 'workspace' | 'applications' | 'ai' | 'logs' | 'settings'
+type Screen = 'workspace' | 'applications' | 'ai' | 'logs' | 'settings' | 'blacklist'
 const screens = [
   { id: 'workspace', label: '工作台', icon: Monitor },
   { id: 'applications', label: '投递记录', icon: BriefcaseBusiness },
+  { id: 'blacklist', label: '黑名单', icon: ShieldCheck },
   { id: 'ai', label: 'AI 与简历', icon: Sparkles },
   { id: 'logs', label: '运行记录', icon: Terminal },
   { id: 'settings', label: '本地设置', icon: Settings2 },
@@ -107,6 +110,7 @@ export function App() {
             </div>
           ) : null}
           {screen === 'applications' ? <Applications snapshot={snapshot} command={command} busy={busy} onBrowse={() => setScreen('workspace')} /> : null}
+          {screen === 'blacklist' ? <BlacklistPanel snapshot={snapshot} command={command} /> : null}
           {screen === 'logs' ? <Logs snapshot={snapshot} /> : null}
           {screen === 'ai' ? <AiForm snapshot={snapshot} command={command} importResume={importResume} busy={busy} /> : null}
           {screen === 'settings' ? <Settings snapshot={snapshot} command={command} busy={busy} /> : null}
@@ -227,7 +231,7 @@ function Applications({ snapshot, command, busy, onBrowse }: Actions & { busy: b
             <TableCell><Badge variant={record.status === 'uncertain' || record.status === 'failed' ? 'destructive' : 'secondary'}>{applicationLabels[record.status]}</Badge></TableCell>
             <TableCell className='max-w-xs whitespace-normal'>{record.score === undefined ? '—' : <><Badge variant='outline'>{record.score} 分</Badge><p>{record.aiReason}</p></>}</TableCell>
             <TableCell>{resumeLabels[record.resume]}</TableCell><TableCell className='max-w-xs whitespace-normal'>{record.detail}{record.greeting ? <p className='text-muted-foreground'>{record.greeting}</p> : null}</TableCell><TableCell>{time(record.updatedAt)}</TableCell>
-            <TableCell><Button variant='ghost' size='sm' disabled={busy} onClick={async () => { if (await command({ type: 'open-job', url: record.job.url })) onBrowse() }}>查看<ArrowRight /></Button></TableCell>
+            <TableCell><Button variant='ghost' size='sm' disabled={busy} onClick={async () => { if (await command({ type: 'open-job', url: record.job.url })) onBrowse() }}>查看<ArrowRight /></Button>{(['company', 'job', 'recruiter'] as const).map(kind => <Button key={kind} variant='ghost' size='sm' disabled={!blacklistValue(record.job, kind)} onClick={() => void command({ type: 'add-blacklist', entry: { platform: record.job.platform, kind, match: 'exact', value: blacklistValue(record.job, kind), label: kind === 'company' ? record.job.company : kind === 'job' ? record.job.title : record.job.recruiterName || '招聘者' } })}>拉黑{blacklistLabels[kind]}</Button>)}</TableCell>
           </TableRow>)}</TableBody>
         </Table> : <Empty><EmptyHeader><EmptyMedia variant='icon'><ListFilter /></EmptyMedia><EmptyTitle>{query ? '没有匹配的记录' : '暂无投递记录'}</EmptyTitle></EmptyHeader><EmptyContent><Button variant='outline' onClick={query ? () => setQuery('') : onBrowse}>{query ? '清空筛选' : '前往工作台'}</Button></EmptyContent></Empty>}
       </div>
